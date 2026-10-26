@@ -38,7 +38,7 @@ Loader and enable both.
 | `PLAN.md` | The design notes and measurements from the test builds (Korean). |
 | `probe/` | Engine Probe, the test addon used to find what the game lets a mod read. |
 
-`build.py` uses `write_module` from Extended Pickup Icons Range's `build.py`
+`build.py` takes the patch header and the name hash from Extended Pickup Icons Range's `build.py`
 (https://github.com/NeverB0re/HD2-Extended-Pickup-Icons), expected next to this folder.
 
 ## Working on it
