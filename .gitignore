@@ -1,0 +1,7 @@
+dist/
+test-builds/
+__pycache__/
+*.pyc
+.venv/
+# third-party mods downloaded for research
+/HD2 Transmog*.zip

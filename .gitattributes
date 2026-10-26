@@ -1,0 +1,6 @@
+*.lua -text
+*.md -text
+*.py -text
+*.json -text
+*.zip binary
+*.png binary
