@@ -572,6 +572,19 @@ class ArcTest(unittest.TestCase):
         self.frames(30)
         self.assertGreater(len(self.lines()), 20)
 
+    def test_c4_tank_seat_raised(self):
+        # on a tank's top the detonator sits 0.45 m off already and only rises to aim: from 0.59 to 1.1 m up
+        det = self.add_unit("51f50d6321f52f3d", 0.37, -0.24, 0.59)
+        self.hand_pose(42)
+        self.add_unit("16474112801385b6", 3.1, 0, -2.2)
+        self.frames(2)
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.assertEqual(self.lines(), [])
+        self.lua.eval("function(u) u.z = 1.1 end")(det)
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+
     def test_c4_driver_seat(self):
         # seated, right held, the detonator never leans out (and sits low, 0.46 m up): no arc
         self.add_unit("51f50d6321f52f3d", 0.06, -0.25, 0.46)
@@ -735,6 +748,18 @@ class ArcTest(unittest.TestCase):
         self.lua.eval("function(u) u.x = 0.42 end")(det)
         self.frames(2)
         self.assertAlmostEqual(self.drawn_speed(15 + 4.4), 29.1, delta=0.1)
+
+    def test_armour_told_once(self):
+        # the pass over all the world's units: at the first aim only, not at every throw
+        self.wear("DS-10 Big Game Hunter")
+        self.aim(15)
+        first = self.fake.calls["World.units"]
+        for _ in range(3):
+            self.fake["mouse"]["left"] = False
+            self.frames(2)
+            self.aim(15)
+        self.assertEqual(self.fake.calls["World.units"], first)
+        self.assertIn("throw range +20%", self.logs())
 
     def test_a_lookalike_without_the_perk(self):
         # FS-23 Battle Master shares 20 of TR-62 Knight's 23 units, but throws no farther

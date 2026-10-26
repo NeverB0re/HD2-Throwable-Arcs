@@ -2,15 +2,18 @@
 
 A **HELLDIVERS 2** mod that draws where your throw will fly while you aim it:
 
-- **Stratagem balls:** once the code is in and you hold the throw, a white dashed arc shows the flight.
-- **C4:** while you aim it with right mouse (DEPLOY mode), the same arc shows where the charge goes.
+- **Stratagem balls:** once the code is in and you hold the throw (left mouse) or aim it (right mouse), a white dashed
+  arc shows the flight.
+- **C4:** while you aim it with right mouse in DEPLOY mode, the same arc shows where the charge goes: standing,
+  crouched, prone, sliding, diving, and from a vehicle's passenger seats.
 - **C4 mode icon:** while C4 is in your hand, the game's DEPLOY or DETONATE icon sits beside the crosshair, so you
-  always know whether you hold a charge or the detonator. It can be turned off in the options menu (F9 > Throwable
-  Arcs), for players whose HUD mod already shows it.
+  always know whether you hold a charge or the detonator (in a vehicle, only while you aim). It can be turned off in
+  the options menu (F9 > Throwable Arcs), for players whose HUD mod already shows it.
 
 The arc is a line in the 3D world: walls and ground hide it, so the point where it disappears into the terrain is
-where the throw lands. It follows your stance (standing, crouched, prone) and your armour: Servo-Assisted and Desert
-Stormer armours throw farther, and the arc goes with them (measured from real throws).
+where the throw lands. It starts where your hand lets go and follows your armour: Servo-Assisted and Desert Stormer
+armours throw farther, and the arc goes with them (all measured from real throws). Throws on the move go a little
+off it.
 
 **Render Scale below native:** with the game's Anti-Aliasing off, the game clips 3D drawing to a corner of the
 screen, and the arc with it. Turn Anti-Aliasing on (any quality) and the arc shows whole. Right after changing it the

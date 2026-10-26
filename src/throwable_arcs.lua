@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.9'
+local VERSION = '1.0.1'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -72,7 +72,9 @@ end
 -- ------------------------------------------------------------------ my armour (the throw-range perks)
 -- Servo-Assisted armours throw 30% farther, Desert Stormer ones 20%. The armour is told from the units on my helldiver
 -- when aiming begins: the armour in the table (src/armour_table.lua, from HD2 Transmog's catalog) with the largest
--- share of its units there, at least ARMOUR_SHARE (one pass over the units, at each stratagem throw).
+-- share of its units there, at least ARMOUR_SHARE. It takes one pass over all the world's units (about 3 ms), so it is
+-- done once for my helldiver (a mission's armour doesn't change; a new helldiver after a respawn is looked at again),
+-- or again at the next aim while none was found.
 -- The throw speed, as measured (not the square root of the range bonus: test.26 drew Servo-Assisted throws at 25.1 m/s,
 -- they flew 25.5-26.8): stratagem balls 1.1x with Desert Stormer (test.17: 24.0-24.2 m/s of 22), 1.2x with
 -- Servo-Assisted (test.26: 25.5-26.8, about 26.5); C4 1.3x with Servo-Assisted (test.26: about 29 of 22.4), and 1.2x with
@@ -94,6 +96,7 @@ for i, row in ipairs(type(ARMOUR) == 'table' and ARMOUR or {}) do
   armour_rows[i] = { name = row[1], bonus = row[2], size = n }
 end
 local throw_bonus, said_armour = 0, nil
+local armour_of = nil            -- the helldiver the armour was told for
 
 local function speed_up(c4)
   local f = SPEED_UP[math.floor(throw_bonus * 100 + 0.5)]
@@ -131,7 +134,7 @@ local function kinds_on_me()
 end
 
 local function find_armour()
-  if not me then return end
+  if not me or (me_unit and me_unit == armour_of) then return end
   local from = 'Transmog'
   local kinds = transmog_kinds()
   if not kinds then kinds, from = kinds_on_me(), 'on me' end
@@ -149,6 +152,7 @@ local function find_armour()
   local two = nil
   for b, n in pairs(whole) do if bi and b ~= armour_rows[bi].bonus then two = n end end
   throw_bonus = bi and not two and armour_rows[bi].bonus or 0
+  if bi then armour_of = me_unit end
   local name = bi and armour_rows[bi].name or 'none of the table'
   if two then name = name .. ' and ' .. two .. ' (a look mod? no bonus)' end
   name = name .. ' [' .. from .. ']'
@@ -331,14 +335,16 @@ local C4_PUSH, C4_KEEP, C4_RIGHT, C4_HIGH = 0.1, 0.05, 0.15, 1.6
 -- Seated in a vehicle, aiming behind brings the detonator in to 0.1-0.2 m from my feet (1.0.1-test.3): there an aim
 -- once begun (leaning out moves it outward; in the driver's seat it never begins) is kept while right is held and C4 is
 -- in hand.
-local C4_HAND, C4_LOW_UP, C4_PRONE_UP, C4_DIVE, DIVE_GRIP, C4_GRACE = 1.6, 0.75, 0.5, 2, 40, 0.25
+-- On a tank's top seat it already sits 0.45 m off my feet and stays there; aiming raises it instead, from 0.59 to
+-- 1.08-1.21 m (1.0.1-test.9): risen C4_RAISE m or more above its lowest since right went down is the aim pose too.
+local C4_HAND, C4_LOW_UP, C4_PRONE_UP, C4_DIVE, DIVE_GRIP, C4_GRACE, C4_RAISE = 1.6, 0.75, 0.5, 2, 40, 0.25, 0.3
 local c4_ready_at = -100
 local c4_grip_at, grip_next = -100, 0   -- when C4's hand pose was last seen, and is next looked at with right up
 local in_vehicle                 -- function() below (the icon's)
 local C4_GRIP, C4_REARM = 42, 0.8
 local c4_rearm = 0
 local det_watch = chef.watch and chef.watch({ [C4_DET] = true }, 0.5)
-local was_right, c4_aim, c4_det, c4_least = false, false, nil, nil
+local was_right, c4_aim, c4_det, c4_least, c4_low = false, false, nil, nil, nil
 local c4_posed = false           -- in C4's aim pose (DEPLOY or DETONATE alike; c4_aim: and the arc drawn)
 
 -- C4's mode: DEPLOY (a charge in hand, thrown) or DETONATE (the detonator in hand; right drew the arc there too in
@@ -458,7 +464,7 @@ end
 local function read_c4(c)
   local right, left = chef.mouse_down('right') == true, chef.mouse_down('left') == true
   if right and not was_right then
-    c4_least = nil
+    c4_least, c4_low = nil, nil
     if det_watch then det_watch.refresh() end
   end
   local held, posed = false, false
@@ -475,9 +481,9 @@ local function read_c4(c)
     local ready = false
     if u and (grip == nil or grip == C4_GRIP) then
       local across = math.sqrt(ahead * ahead + side * side)
-      c4_least = math.min(c4_least or across, across)
+      c4_least, c4_low = math.min(c4_least or across, across), math.min(c4_low or high, high)
       ready = (grip ~= nil or side >= C4_RIGHT) and high <= C4_HIGH
-              and across - c4_least >= (c4_posed and C4_KEEP or C4_PUSH)
+              and (across - c4_least >= (c4_posed and C4_KEEP or C4_PUSH) or high - c4_low >= C4_RAISE)
       if grip == C4_GRIP then
         if in_vehicle() then
           if c4_posed then ready = true end
@@ -627,7 +633,6 @@ local VEHICLES = { cc21c7ffd3ebefb9 = true, ['2d85bfe3d8717fe5'] = true, ['9b214
                    ['16474112801385b6'] = true, b0c9faf4af8903f9 = true, ['79e4b3d2da5e45e3'] = true }
 local VEHICLE_NEAR, VEHICLE_SEAT, VEHICLE_UP = 1.2, 4.5, 0.35
 local vehicle_watch = chef.watch and chef.watch(VEHICLES, 0.5)
-local on_vehicle = nil           -- test builds: function(across, up) for the nearest vehicle within 5 m
 
 in_vehicle = function()
   if not (vehicle_watch and me) then return false end
@@ -641,7 +646,6 @@ in_vehicle = function()
       end
     end
   end
-  if best and best < 6 and on_vehicle then on_vehicle(best, bup) end
   return best ~= nil and (best < VEHICLE_NEAR or (best < VEHICLE_SEAT and bup >= VEHICLE_UP))
 end
 
@@ -700,42 +704,6 @@ local function c4_icon(c)
   if icon_mode then draw_icon(icon_mode) end
 end
 
--- ------------------------------------------------------------------ test builds only
--- Where I am from the nearest vehicle (to check the in-vehicle rule), and which C4 object is read (to check the swap):
--- logged when they change.
-local said_vehicle, said_c4 = nil, nil
-on_vehicle = function(across, up)
-  local text = string.format('%.1f m across, %.1f m up', across, up)
-  if text ~= said_vehicle then said_vehicle = text; log('nearest vehicle: %s', text) end
-end
--- While C4 is in my hand or right is held: where the detonator is from my feet, the hand pose and the arc, every 0.1 s
--- when something changed (1.0.1-test.2 also looked for an aim value among the animation variables: of some 90 likely
--- names only throw_charge, move_speed and turn_speed are there, and throw_charge stays 0 with C4).
-local det_said, det_next = nil, 0
-local function log_det(c)
-  if now() < det_next then return end
-  det_next = now() + 0.1
-  local u = me_unit
-  if not (u and chef.unit_alive(u)) then return end
-  local grip = hand_pose()
-  if grip ~= C4_GRIP and chef.mouse_down('right') ~= true then det_said = nil return end
-  local d, ahead, side, high = det_in_hand(c)
-  local text = string.format('pose %s, right %s, arc %s', tostring(grip), tostring(chef.mouse_down('right') == true),
-                             tostring(c4_aim))
-  local place = d and string.format('%.2f ahead %.2f right %.2f up (%.2f across)', ahead, side, high,
-                                    math.sqrt(ahead * ahead + side * side)) or 'not in hand'
-  local said = det_said
-  if not said or said.text ~= text or said.place ~= place then
-    det_said = { text = text, place = place }
-    log('detonator %s; feet %.2f under the camera; %s', place, feet_z and c.z - feet_z or -1, text)
-  end
-end
-
-local function log_c4_object()
-  local text = tostring(c4_obj.goid)
-  if text ~= said_c4 then said_c4 = text; log('c4 object read: %s (mode %s)', text, tostring(icon_mode)) end
-end
-
 -- ------------------------------------------------------------------ the frame
 local said_world = nil
 
@@ -754,8 +722,6 @@ function M.update(dt)
   read_input(c)
   read_c4(c)
   c4_icon(c)
-  log_c4_object()
-  log_det(c)
   if aiming or c4_aim then
     update_feet(c)
     draw_arc(c)
