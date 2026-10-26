@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.6'
+local VERSION = '1.0.1-test.7'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -593,9 +593,20 @@ end
 
 -- ------------------------------------------------------------------ C4's mode by the crosshair
 -- C4 is known for not showing which of its two is in the hand. While it is in mine (hand pose C4_GRIP) and its mode can
--- be read, an icon to the right of the crosshair, drawn as the game's own: an arrow up over a charge for DEPLOY, a
--- toothed ring for DETONATE. An option turns it off (another HUD mod may show it).
+-- be read, an icon to the right of the crosshair, the game's own: an arrow up over a charge for DEPLOY, a toothed ring
+-- for DETONATE. An option turns it off (another HUD mod may show it).
+-- The icons are cut from the game's HUD atlas (tools/c4_icons.py) and shipped in the mod's patch, each at a few sizes
+-- (the screen's drawing has no mipmaps): ICONS, put in by build.py, is mode -> { size, texture, ... } from the smallest.
+-- The icon fills ICON_FILL of its texture's height. Where a texture can't be drawn (chef.bitmap gives false), the icon
+-- is drawn with shapes after it, as 1.0.0 did.
 local ICON_SIZE, ICON_GAP = 0.024, 0.06     -- of the screen's height: the icon's height, and from the centre to its left
+local ICONS = "@ICONS@"
+local ICON_FILL, ICON_ALPHA = 65 / 76, 200
+if type(ICONS) == 'table' and chef.texture_sizes then
+  local sizes = {}
+  for _, l in pairs(ICONS) do sizes[l[#l]] = l end
+  chef.texture_sizes(sizes)
+end
 local show_icon = true
 if chef.has and chef.has('menu') then
   chef.title('Throwable Arcs')
@@ -636,6 +647,14 @@ local function draw_icon(mode)
   if not (w and h) then return end
   local sz = math.floor(h * ICON_SIZE + 0.5)
   local layer = (chef.TOP or 0) + 1100      -- over the HUD and the map, under the menus
+  local tex = type(ICONS) == 'table' and ICONS[mode]
+  if tex and chef.bitmap then
+    local box = sz / ICON_FILL
+    if chef.bitmap(tex[#tex], w / 2 + h * ICON_GAP - (box - sz) / 2, h / 2 - box / 2, box, box,
+                   chef.color(255, 255, 255, ICON_ALPHA), layer) then
+      return
+    end
+  end
   local ink = chef.color(250, 250, 236, 190)
   local shade = chef.color(0, 0, 0, 110)
   -- a shadow 1/16 down and right, then the icon

@@ -83,6 +83,12 @@ chef = {
   circle = function(...) fake.shapes[#fake.shapes + 1] = 'circle' end,
   ring = function(...) fake.shapes[#fake.shapes + 1] = 'ring' end,
   setting = function(path) return fake.settings[path] end,
+  bitmap = function(tex, x, y, w, h, c, layer)
+    if fake.no_bitmap then return false end
+    fake.shapes[#fake.shapes + 1] = 'bitmap ' .. tex
+    return true
+  end,
+  texture_sizes = function(map) fake.sizes = map end,
   bind = function(id, default)
     fake.bound = fake.bound or default
     return { key = function() return fake.bound end, down = function() return fake.down[fake.bound] == true end }
@@ -390,7 +396,24 @@ class ArcTest(unittest.TestCase):
     def shapes(self):
         return list(self.fake.shapes.values())
 
+    def test_c4_mode_icon_is_the_games(self):
+        # the game's icon, shipped in the patch at 4 sizes: one bitmap, of the biggest (the loader picks the size)
+        self.c4_in_hand()
+        self.hand_pose(42)
+        self.c4_object(80)
+        self.frames(10)
+        shapes = self.shapes()
+        self.assertEqual(len(shapes), 1)
+        deploy = self.lua.eval("function(f) local n = 0; for k, l in pairs(f.sizes) do n = n + 1 end; return n end")(self.fake)
+        self.assertEqual(deploy, 2, "a size ladder for each icon")
+        self.assertRegex(shapes[0], r"^bitmap [0-9a-f]{16}$")
+        self.fake["c4_options"] = 336
+        self.frames(10)
+        self.assertNotEqual(self.shapes()[0], shapes[0], "DETONATE's own")
+
     def test_c4_mode_icon(self):
+        # without the textures (chef.bitmap false): drawn with shapes
+        self.fake["no_bitmap"] = True
         self.c4_in_hand()
         self.hand_pose(42)
         self.c4_object(80)
@@ -418,6 +441,7 @@ class ArcTest(unittest.TestCase):
         self.assertEqual(self.shapes(), [])
 
     def test_hand_pose_found_later(self):
+        self.fake["no_bitmap"] = True
         # the variable not there yet at first: looked for again 5 s later
         self.c4_in_hand()
         self.c4_object(80)
@@ -559,6 +583,7 @@ class ArcTest(unittest.TestCase):
 
     def test_swapped_detonator(self):
         # the C4 dropped (not carried any more) is let go and the one carried is read
+        self.fake["no_bitmap"] = True
         self.c4_in_hand()
         self.hand_pose(42)
         self.c4_object(80)
