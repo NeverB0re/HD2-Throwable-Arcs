@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.4'
+local VERSION = '1.0.1-test.5'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -321,15 +321,18 @@ local C4_DET = '51f50d6321f52f3d'
 local C4_SPEED, C4_LIFT, C4_RELEASE_UP = 22.4, math.rad(4.4), 1.0
 local C4_PUSH, C4_KEEP, C4_RIGHT, C4_HIGH = 0.1, 0.05, 0.15, 1.6
 -- Leaning out of a vehicle's window to aim, the detonator gets 1.15-1.2 m from my feet across (1.0.1-test.2): its hand
--- reaches C4_HAND m. Prone it lies under C4_PRONE_UP m above my feet (0.06-0.46 m; crouched it is 0.51 m up or
--- more), and right moves it not at all (1.0.1-test.2; looking behind, test.3 found it anywhere from 0 to 0.6 m off my
--- feet): there, C4 in hand (the hand pose) and right held is the aim.
+-- reaches C4_HAND m. Prone (0.06-0.46 m above my feet), crouched (0.56-0.69 m) and sliding on my knees (0.55-0.58 m)
+-- it is under C4_LOW_UP m and right moves it little or not at all (1.0.1-test.2-4; standing it is 0.82 m up or more):
+-- there, C4 in hand (the hand pose) and right held is the aim. Not in a vehicle: in the driver's seat it is 0.46 m up
+-- (test.4 drew the arc there).
 -- Diving, the hand pose reads 40 (as with a grenade) while the detonator lies low on my left (1.0.1-test.3): within
--- C4_DIVE s of C4's pose, 40 with the detonator low counts as C4.
+-- C4_DIVE s of C4's pose, 40 counts as C4 with the detonator under C4_PRONE_UP m, or while an aim goes on (in the air
+-- it flickers, test.4). An aim that stops being one is kept C4_GRACE s, for such moments.
 -- Seated in a vehicle, aiming behind brings the detonator in to 0.1-0.2 m from my feet (1.0.1-test.3): there an aim
 -- once begun (leaning out moves it outward; in the driver's seat it never begins) is kept while right is held and C4 is
 -- in hand.
-local C4_HAND, C4_PRONE_UP, C4_DIVE, DIVE_GRIP = 1.6, 0.5, 2, 40
+local C4_HAND, C4_LOW_UP, C4_PRONE_UP, C4_DIVE, DIVE_GRIP, C4_GRACE = 1.6, 0.75, 0.5, 2, 40, 0.25
+local c4_ready_at = -100
 local c4_grip_at, grip_next = -100, 0   -- when C4's hand pose was last seen, and is next looked at with right up
 local in_vehicle                 -- function() below (the icon's)
 local C4_GRIP, C4_REARM = 42, 0.8
@@ -467,14 +470,22 @@ local function read_c4(c)
     update_feet(c)
     local u, ahead, side, high = det_in_hand(c)
     local grip = hand_pose()
-    if grip == DIVE_GRIP and u and high < C4_PRONE_UP and now() - c4_grip_at <= C4_DIVE then grip = C4_GRIP end
+    if grip == DIVE_GRIP and u and (c4_aim or high < C4_PRONE_UP) and now() - c4_grip_at <= C4_DIVE then grip = C4_GRIP end
     local ready = false
     if u and (grip == nil or grip == C4_GRIP) then
       local across = math.sqrt(ahead * ahead + side * side)
       c4_least = math.min(c4_least or across, across)
       ready = (grip ~= nil or side >= C4_RIGHT) and high <= C4_HIGH
               and across - c4_least >= (c4_aim and C4_KEEP or C4_PUSH)
-      if grip == C4_GRIP and (high < C4_PRONE_UP or (c4_aim and in_vehicle())) then ready = true end
+      if grip == C4_GRIP then
+        if in_vehicle() then
+          if c4_aim then ready = true end
+        elseif high < C4_LOW_UP then
+          ready = true
+        end
+      end
+      if ready then c4_ready_at = now() end
+      if c4_aim and not ready and grip == C4_GRIP and now() - c4_ready_at < C4_GRACE then ready = true end
     end
     if c4_aim and left then c4_rearm = now() + C4_REARM end
     held = ready == true and not left and now() >= c4_rearm and c4_mode(not c4_aim) ~= 'detonate'

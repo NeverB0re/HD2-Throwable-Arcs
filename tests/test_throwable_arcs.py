@@ -437,7 +437,7 @@ class ArcTest(unittest.TestCase):
         self.frames(2)
         self.assertGreater(len(self.lines()), 20)
         self.lua.eval("function(u) u.x, u.z = -0.1, 0.9 end")(det)
-        self.frames(2)
+        self.frames(30)                             # (kept 0.25 s, for dives)
         self.assertEqual(self.lines(), [])
 
     def test_c4_aim_kept_while_turning(self):
@@ -510,6 +510,15 @@ class ArcTest(unittest.TestCase):
         self.frames(2)
         self.assertEqual(self.lines(), [])
 
+    def test_c4_knee_slide(self):
+        # sliding on my knees: the detonator at crouch height and not moving out, still the aim
+        self.add_unit("51f50d6321f52f3d", 0.15, -0.3, 0.57)
+        self.hand_pose(42)
+        self.frames(2)
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+
     def test_c4_passenger_aiming_behind(self):
         det = self.c4_in_hand()
         self.hand_pose(42)
@@ -525,8 +534,8 @@ class ArcTest(unittest.TestCase):
         self.assertGreater(len(self.lines()), 20)
 
     def test_c4_driver_seat(self):
-        # seated, right held, the detonator never leans out: no arc
-        self.c4_in_hand()
+        # seated, right held, the detonator never leans out (and sits low, 0.46 m up): no arc
+        self.add_unit("51f50d6321f52f3d", 0.06, -0.25, 0.46)
         self.hand_pose(42)
         self.vehicle_at(0.4, 0.3, -0.6)
         self.fake["mouse"]["right"] = True
