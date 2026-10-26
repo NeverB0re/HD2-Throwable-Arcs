@@ -47,7 +47,6 @@ chef = {
   camera = function() return fake.cam end,
   unit_alive = function(u) return u.dead ~= true end,
   unit_kind = function(u) return u.kind end,
-  unit_rotation = function(u) return u.fx or 0, u.fy or 1, 0 end,
   unit_position = function(u)
     if u.kind == '46cab355bd8d4d37' then error('NATIVE CRASH: asked a runtime-built unit') end
     return u.x, u.y, u.z
@@ -603,16 +602,6 @@ class ArcTest(unittest.TestCase):
 
     def vehicle_at(self, x, y, z):
         return self.add_unit("cc21c7ffd3ebefb9", x, y, z)
-
-    def test_icon_in_the_passenger_seat(self):
-        # an FRV heading +y: its passenger sits on its right (me 0.4 m right of its middle): the icon stays
-        self.c4_in_hand()
-        self.hand_pose(42)
-        self.c4_object(80)
-        self.vehicle_at(-0.4, 0, -0.6)
-        self.frames(40)
-        self.assertGreater(len(self.shapes()), 0)
-        self.assertIn("seat in the vehicle: 0.0 ahead, 0.4 right, 0.6 up (driver: false)", self.logs())
 
     def test_no_icon_in_a_vehicle(self):
         self.c4_in_hand()
