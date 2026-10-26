@@ -2,20 +2,24 @@
 -- Throwable Arcs: while a stratagem ball is in my hand and left mouse is held, or C4 is aimed with right mouse, draws
 -- where it will fly. The arc is a world line: the game hides it behind walls and ground, so where it goes into the
 -- ground is where it lands (the terrain can't be asked). Below native Render Scale the game clips the 3D scene's drawing
--- to a corner of the screen; it is drawn the same way there all the same. The numbers are measured from real throws
--- (mods/throwable-arcs/PLAN.md, section 6-1): the ball leaves along the camera's line at about 22 m/s, about 9 degrees
--- above its pitch. Grenades aren't drawn: which one is in the hand can't be told before it is thrown.
+-- to a corner of the screen when the game's anti-aliasing is off (with it on, it shows whole). The numbers are measured
+-- from real throws (mods/throwable-arcs/PLAN.md, section 6-1). Grenades aren't drawn: which one is in the hand can't be
+-- told before it is thrown.
 -- C4's hand pose and mode are read as NarrowHUD by luka189 reads them (Nexus 17882); the armour table comes from HD2
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.0'
+local VERSION = '1.0.1-test.1'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
 
 local STRATAGEM_BALL = '16f397ca5f51f271'
-local SPEED, LIFT, GRAVITY = 22, math.rad(9), 9.81   -- 6 clean throws
+-- A ball is let go RELEASE_UP m above where it is held in the aim (the arm swings up), heading as the camera looks,
+-- LIFT above its pitch, at SPEED: fitted on 24 measured throws along 1-40 m of their flight (test.18-30; prone ones fit
+-- within 0.3 m). Until 1.0.0 the arc started at the ball and eased into a path from the camera (9 degrees up), which
+-- fit far throws but was off near ones.
+local SPEED, LIFT, RELEASE_UP, GRAVITY = 22, math.rad(7.8), 0.4, 9.81
 local STEP = 0.03                -- seconds per arc segment
 local MOST_T = 6                 -- seconds of flight drawn at most
 local DEEPEST = 15               -- m under my feet the arc goes at most (it is hidden under the ground anyway)
@@ -38,7 +42,7 @@ local feet_z, me = nil, nil      -- me: { x, y, z } of my helldiver (its feet)
 local me_unit = nil              -- my helldiver's unit
 
 local function update_feet(c)
-  feet_z, me = nil, nil
+  feet_z, me, me_unit = nil, nil, nil
   if not players then return end
   local best
   for _, it in ipairs(players.items) do
@@ -200,6 +204,7 @@ end
 -- 0.2 m above where it was (test.22, standing: 1.25 -> 1.47 m above my feet; test.21, crouched +0.15-0.3, prone
 -- +0.2-0.5). So while left is held with a ball in hand that isn't ready, it becomes the aim once it rose RAISE m above
 -- its height when left went down; it is watched as long as left is held and it stays in hand.
+-- Right mouse aims a ball too (1.0.1): held like left, the throw still being left's release.
 local READY_PULL, READY_AHEAD, READY_WINDOW, RAISE = 0.15, 0.05, 0.5, 0.15
 local pending, pending_up = nil, nil   -- a ball in hand with left held, not ready yet, and its height then
 local ready_ball, pose = nil, { list = {} }   -- pose: the ball in hand while left is up, and where it was ({ t, ahead })
@@ -231,16 +236,21 @@ local function watch_pose(c)
 end
 
 
+local was_hold = false
+
 local function read_input(c)
   local t = now()
   local left = chef.mouse_down('left') == true
+  local hold = left or chef.mouse_down('right') == true
   if not left then watch_pose(c) end
-  if left and not was_left then
+  if hold and not was_hold then
     held_since, looking = t, true
     if ball_watch then ball_watch.refresh() end
   end
   local held = false
-  if left then
+  if was_left and not left and aiming then
+    ball, ready_ball, looking = nil, nil, false   -- thrown
+  elseif hold then
     if aiming then
       update_feet(c)
       held = still_in_hand(ball)
@@ -270,11 +280,9 @@ local function read_input(c)
         looking = false                      -- no ball in hand: a shot
       end
     end
-  elseif was_left and aiming then
-    ball, ready_ball = nil, nil
   end
-  if not left then pending = nil end
-  was_left = left
+  if not hold then pending = nil end
+  was_left, was_hold = left, hold
   aiming = held
 end
 
@@ -286,13 +294,15 @@ end
 -- c4_charge_backpack/c4_charge_detonator; its charge is no unit until it flies, and my helldiver's 1 mesh never
 -- changes, test.24-25), held in my right hand (test.25, standing: about 0 ahead, 0.4 right, 1.05 up from my feet), and
 -- right held it goes C4_PUSH m or more forward into the aim within 0.3 s; C4_RIGHT m or more to my right and not above
--- C4_HIGH m (the throw raises it to 2.05-2.11 m). The arc starts at the detonator either way.
+-- C4_HIGH m (the throw raises it to 2.05-2.11 m). The aim pose is asked for with the hand pose too (1.0.1): putting C4
+-- away while aiming kept the pose a moment and drew the arc, and right in a vehicle's driver seat (no aiming there)
+-- drew it as well.
 -- After a throw, no arc for C4_REARM s: test.28 drew it again 0.2-0.3 s after each throw, from the arm still swinging
 -- (0.8 ahead, 1.3-1.6 m up).
--- The charge leaves at about 22.4 m/s, 6.4 degrees above the camera's pitch (test.26 and test.28's Servo-Assisted
--- throws, 29.2 m/s, fitted along 8-46 m of their flight; drawn at 5 degrees it ran 0.5-0.7 m low).
+-- The charge is let go C4_RELEASE_UP m above the detonator in the aim pose (the arm swings up and throws from higher),
+-- at about 22.4 m/s, C4_LIFT above the camera's pitch: fitted on 5 measured throws (test.26-30), 0.1 m off along 1-40 m.
 local C4_DET = '51f50d6321f52f3d'
-local C4_SPEED, C4_LIFT = 22.4, math.rad(6.4)
+local C4_SPEED, C4_LIFT, C4_RELEASE_UP = 22.4, math.rad(4.4), 1.0
 local C4_PUSH, C4_RIGHT, C4_HIGH = 0.2, 0.15, 1.6
 local C4_GRIP, C4_REARM = 42, 0.8
 local c4_rearm = 0
@@ -303,11 +313,13 @@ local was_right, c4_aim, c4_det, c4_least = false, false, nil, nil
 -- test.27). Read as NarrowHUD (luka189, Nexus 17882) reads it: the C4 is a network game object of mine, of the type
 -- C4_TYPE (a stand-in name with the same 32-bit hash as the real one, type 6b2c3bed, from the game's network config),
 -- and its options field (C4_OPTIONS) holds the mode in the bits at 256 (80 deploy, 336 detonate). In someone else's
--- game the host may own it: the host's C4 objects whose owner field (C4_OWNER) is me count too. The object is looked
--- for when right goes down (at most every C4_SCAN s while none is found) and kept for the world; before each read it
--- must still exist and be that type (reading a gone object's field can end the game, NarrowHUD's notes). Not
--- readable (a game patch, a Chef that refuses the calls): the hand alone tells it, as before.
-local C4_TYPE, C4_OPTIONS, C4_OWNER = 'kbv6zx', 'ozvglfc', 'g5g7b9d'
+-- game the host may own it: the host's C4 objects whose owner field (C4_OWNER) is me count too. Only the one I carry
+-- (its carry field, C4_CARRY, a multiple of 4: NarrowHUD's rule): a detonator swapped for another one stays mine where
+-- it was dropped, and 1.0.0 kept reading it. The object is looked for when right goes down or for the icon (at most
+-- every C4_SCAN s while none is found) and kept while I carry it; before each read it must still exist and be that
+-- type (reading a gone object's field can end the game, NarrowHUD's notes). Not readable (a game patch, a Chef that
+-- refuses the calls): the hand alone tells it, as before.
+local C4_TYPE, C4_OPTIONS, C4_OWNER, C4_CARRY = 'kbv6zx', 'ozvglfc', 'g5g7b9d', 'n5jmvf'
 local C4_SCAN = 2
 local c4_obj = { goid = nil, world = nil, next = 0 }
 
@@ -321,16 +333,22 @@ local function is_c4(gs, goid)
      and chef.call_kind('GameSession.game_object_is_type', 'c4 type', gs, goid, C4_TYPE) == true
 end
 
+-- (a C4 that I carry: one that is still there and is C4 first)
+local function carried(gs, goid)
+  local v = chef.call_kind('GameSession.game_object_field', 'c4 carry', gs, goid, C4_CARRY)
+  return type(v) == 'number' and v % 4 == 0
+end
+
 local function find_c4_object(gs, peer)
   local mine = chef.call_kind('GameSession.objects_owned_by', 'c4 owned', gs, peer)
   if type(mine) ~= 'table' then return nil end
-  for _, goid in pairs(mine) do if is_c4(gs, goid) then return goid end end
+  for _, goid in pairs(mine) do if is_c4(gs, goid) and carried(gs, goid) then return goid end end
   local host = chef.call_kind('GameSession.game_session_host', 'c4 host', gs)
   if host == nil or host == peer then return nil end
   local theirs = chef.call_kind('GameSession.objects_owned_by', 'c4 owned', gs, host)
   for _, goid in pairs(type(theirs) == 'table' and theirs or {}) do
-    if is_c4(gs, goid) and peer_text(chef.call_kind('GameSession.game_object_field', 'c4 owner', gs, goid, C4_OWNER))
-                           == peer_text(peer) then
+    if is_c4(gs, goid) and carried(gs, goid)
+       and peer_text(chef.call_kind('GameSession.game_object_field', 'c4 owner', gs, goid, C4_OWNER)) == peer_text(peer) then
       return goid
     end
   end
@@ -344,7 +362,7 @@ local function c4_mode(look)
   if gs == nil or peer == nil then return nil end
   local w = chef.world_id()
   if c4_obj.world ~= w then c4_obj.goid, c4_obj.world, c4_obj.next = nil, w, 0 end
-  if c4_obj.goid and not is_c4(gs, c4_obj.goid) then c4_obj.goid = nil end
+  if c4_obj.goid and not (is_c4(gs, c4_obj.goid) and carried(gs, c4_obj.goid)) then c4_obj.goid = nil end
   if not c4_obj.goid then
     if not look or now() < c4_obj.next then return nil end
     c4_obj.next = now() + C4_SCAN
@@ -414,12 +432,8 @@ local function read_c4(c)
     update_feet(c)
     local u, ahead, side, high = det_in_hand(c)
     local grip = hand_pose()
-    local ready
-    if grip ~= nil then
-      ready = grip == C4_GRIP
-    elseif c4_aim then
-      ready = u ~= nil and u == c4_det
-    elseif u then
+    local ready = false
+    if u and (grip == nil or grip == C4_GRIP) then
       c4_least = math.min(c4_least or ahead, ahead)
       ready = side >= C4_RIGHT and high <= C4_HIGH and ahead - c4_least >= C4_PUSH
     end
@@ -439,11 +453,7 @@ local WIDTH = 3                  -- px: the arc's width on the screen
 -- the arc is dashed by flight time: DASH segments drawn, GAP left out (about 1.3 m and 0.7 m). test.10-11 measured
 -- dashes in px from the camera, so they slid along the arc whenever the camera moved: it rippled as you turned
 local DASH, GAP = 2, 1
--- m: the arc starts at my hand and joins the throw's path (from the camera) by CONVERGE, or by CONVERGE_PER m for each
--- m the hand is off the camera's line, whichever is longer: prone, the hand is far below it and a 6 m join bent sharply
-local CONVERGE, CONVERGE_PER = 6, 8
-
--- the throw's path, from the ball in my hand, until DEEPEST under my feet or MOST_T: a list of points
+-- the throw's path, from where the ball or charge is let go, until DEEPEST under my feet or MOST_T: a list of points
 local function path(c)
   local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
   local pitch = camera_pitch(c) + (c4_aim and C4_LIFT or LIFT)
@@ -451,8 +461,8 @@ local function path(c)
   if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
   local speed = (c4_aim and C4_SPEED or SPEED) * speed_up(c4_aim)
   local vx, vy, vz = hx * speed * math.cos(pitch), hy * speed * math.cos(pitch), speed * math.sin(pitch)
-  -- where it starts: the ball (or the C4) in my hand, standing, crouched or prone alike; else right of my chest, or under
-  -- the camera
+  -- where it is let go: above the ball (or the C4) in my hand, standing, crouched or prone alike; else right of my
+  -- chest, or under the camera
   local ox, oy, oz
   local held = c4_aim and c4_det or ball
   if held and chef.unit_alive(held) then ox, oy, oz = chef.unit_position(held) end
@@ -461,12 +471,10 @@ local function path(c)
   elseif not ox then
     ox, oy, oz = c.x + hy * 0.3 + hx * 1.5, c.y - hx * 0.3 + hy * 1.5, c.z - 0.6
   end
-  ox, oy, oz = ox - c.x, oy - c.y, oz - c.z
-  local join = math.max(CONVERGE, CONVERGE_PER * math.sqrt(ox * ox + oy * oy + oz * oz))
+  oz = oz + (c4_aim and C4_RELEASE_UP or RELEASE_UP)
   local deepest = (feet_z or (c.z - 2)) - DEEPEST
   local function at(t)
-    local w = 0.5 + 0.5 * math.cos(math.pi * math.min(1, speed * t / join))   -- eases in, no kink
-    return c.x + vx * t + ox * w, c.y + vy * t + oy * w, c.z + vz * t - 0.5 * GRAVITY * t * t + oz * w
+    return ox + vx * t, oy + vy * t, oz + vz * t - 0.5 * GRAVITY * t * t
   end
   local pts = { { at(0) } }
   local t = 0
@@ -529,6 +537,31 @@ if chef.has and chef.has('menu') then
 end
 local icon_mode, icon_next = nil, 0
 
+-- In a vehicle the icon is left out (1.0.0 kept it up there): my helldiver seated in one is within VEHICLE_NEAR m of
+-- its middle across, or within VEHICLE_SEAT m and VEHICLE_UP m or more above its base (standing by one, my feet are on
+-- the ground). The vehicles: the FRVs, the tanks and the exosuit (filediver's names, as in Extended Pickup Icons Range).
+local VEHICLES = { cc21c7ffd3ebefb9 = true, ['2d85bfe3d8717fe5'] = true, ['9b2140378640432e'] = true,
+                   ['16474112801385b6'] = true, b0c9faf4af8903f9 = true, ['79e4b3d2da5e45e3'] = true }
+local VEHICLE_NEAR, VEHICLE_SEAT, VEHICLE_UP = 1.2, 3, 0.35
+local vehicle_watch = chef.watch and chef.watch(VEHICLES, 0.5)
+local on_vehicle = nil           -- test builds: function(across, up) for the nearest vehicle within 5 m
+
+local function in_vehicle()
+  if not (vehicle_watch and me) then return false end
+  local best, bup
+  for _, it in ipairs(vehicle_watch.items) do
+    if chef.unit_alive(it.unit) then
+      local x, y, z = chef.unit_position(it.unit)
+      if x then
+        local across = math.sqrt((x - me[1]) ^ 2 + (y - me[2]) ^ 2)
+        if not best or across < best then best, bup = across, me[3] - z end
+      end
+    end
+  end
+  if best and best < 5 and on_vehicle then on_vehicle(best, bup) end
+  return best ~= nil and (best < VEHICLE_NEAR or (best < VEHICLE_SEAT and bup >= VEHICLE_UP))
+end
+
 local function draw_icon(mode)
   local w, h = chef.screen()
   if not (w and h) then return end
@@ -571,9 +604,22 @@ local function c4_icon(c)
   if now() >= icon_next then
     icon_next = now() + 0.1
     update_feet(c)
-    icon_mode = hand_pose() == C4_GRIP and c4_mode(true) or nil
+    icon_mode = hand_pose() == C4_GRIP and not in_vehicle() and c4_mode(true) or nil
   end
   if icon_mode then draw_icon(icon_mode) end
+end
+
+-- ------------------------------------------------------------------ test builds only
+-- Where I am from the nearest vehicle (to check the in-vehicle rule), and which C4 object is read (to check the swap):
+-- logged when they change.
+local said_vehicle, said_c4 = nil, nil
+on_vehicle = function(across, up)
+  local text = string.format('%.1f m across, %.1f m up', across, up)
+  if text ~= said_vehicle then said_vehicle = text; log('nearest vehicle: %s', text) end
+end
+local function log_c4_object()
+  local text = tostring(c4_obj.goid)
+  if text ~= said_c4 then said_c4 = text; log('c4 object read: %s (mode %s)', text, tostring(icon_mode)) end
 end
 
 -- ------------------------------------------------------------------ the frame
@@ -594,6 +640,7 @@ function M.update(dt)
   read_input(c)
   read_c4(c)
   c4_icon(c)
+  log_c4_object()
   if aiming or c4_aim then
     update_feet(c)
     draw_arc(c)
@@ -605,6 +652,7 @@ end
 function M.shutdown()
   if players then players.stop() end
   if det_watch then det_watch.stop() end
+  if vehicle_watch then vehicle_watch.stop() end
   if ball_watch then ball_watch.stop() end
 end
 

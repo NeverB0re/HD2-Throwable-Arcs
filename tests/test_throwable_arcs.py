@@ -181,14 +181,14 @@ class ArcTest(unittest.TestCase):
         self.frames(200)
         self.assertEqual(self.lines(), [])
 
-    def test_the_arc_starts_at_the_ball_and_goes_on_below_my_feet(self):
+    def test_the_arc_starts_where_the_ball_is_let_go_and_goes_on_below_my_feet(self):
         self.aim(10)
         lines = self.lines()
         self.assertEqual(len(lines) % 2, 0, "2 lines side by side per segment")
         first = [(a + b) / 2 for a, b in zip(lines[0][:3], lines[1][:3])]
         self.assertAlmostEqual(first[0], -0.05, delta=0.02)
         self.assertAlmostEqual(first[1], -0.3, delta=0.02)
-        self.assertAlmostEqual(first[2], 1.5, delta=0.02)
+        self.assertAlmostEqual(first[2], 1.9, delta=0.02, msg="let go 0.4 m above where it is held")
         # dashed: a drawn piece often doesn't start where the last one ended
         centre = lines[0::2]
         gaps = sum(1 for a, b in zip(centre, centre[1:]) if math.dist(a[3:], b[:3]) > 0.05)
@@ -205,20 +205,21 @@ class ArcTest(unittest.TestCase):
         self.frames(2)
         lines = self.lines()
         self.assertGreater(len(lines), 20)
-        self.assertAlmostEqual(lines[0][2], 0.15, delta=0.05)
-        # no sharp bend where it joins the camera's line: the climb angle changes little from one piece to the next
+        self.assertAlmostEqual(lines[0][2], 0.55, delta=0.05)
+        # a plain throw: the climb angle changes little from one piece to the next
         centre = lines[0::2]
         ang = [math.atan2(l[5] - l[2], math.hypot(l[3] - l[0], l[4] - l[1])) for l in centre[:15]]
         self.assertLess(max(abs(a - b) for a, b in zip(ang, ang[1:])), math.radians(6))
 
     def test_dashes_stay_put_when_the_camera_moves(self):
+        # the arc hangs on the ball and the camera's heading only: the camera moving back leaves it where it is
         self.aim(10)
         before = self.lines()
         self.lua.eval("function(f) f.cam.x = f.cam.x - 1 end")(self.fake)
         self.frames(1)
         after = self.lines()
         ends = lambda ls: [round(l[3], 3) for l in ls[0::2]]
-        self.assertEqual([round(x - 1, 3) for x in ends(before)[16:26]], ends(after)[16:26])
+        self.assertEqual(ends(before)[16:26], ends(after)[16:26])
         self.assertEqual(len(before), len(after))
 
     def test_the_arc_goes_when_the_aim_ends(self):
@@ -227,6 +228,23 @@ class ArcTest(unittest.TestCase):
         self.frames(1)
         self.assertEqual([l[2] for l in self.lines()], [-10000], "one empty line resets the line object")
         self.frames(1)
+        self.assertEqual(self.lines(), [])
+
+    def test_right_mouse_aims_a_stratagem(self):
+        self.ready_ball()
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+        self.fake["mouse"]["right"] = False         # aim let go, the ball still in hand: off, and on again
+        self.frames(2)
+        self.assertEqual(self.lines(), [])
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+        self.fake["mouse"]["left"] = True           # thrown with left while right aims
+        self.frames(2)
+        self.fake["mouse"]["left"] = False
+        self.frames(2)
         self.assertEqual(self.lines(), [])
 
     def test_no_key_needed(self):
@@ -306,6 +324,7 @@ class ArcTest(unittest.TestCase):
           f.E['GameSession.game_object_field'] = function(gs, id, name)
             if name == 'ozvglfc' then return f.c4_options end
             if name == 'g5g7b9d' then return 'AB12' end
+            if name == 'n5jmvf' then return f.c4_carry or 0 end
           end
         end""")(self.fake, options, owner_host)
 
@@ -345,15 +364,19 @@ class ArcTest(unittest.TestCase):
           f.E['Unit.animation_get_variable'] = function(u, i) return i == 3 and f.grip or nil end
         end""")(self.fake, grip)
 
-    def test_c4_pose_aims_at_once(self):
-        # with the hand pose, C4 in hand (42) and right is the aim at once, wherever the detonator is
-        self.c4_in_hand()
+    def test_c4_pose_and_aim(self):
+        # C4 in hand (42), right held and the detonator gone forward into the aim: the arc, from 1 m above it
+        det = self.c4_in_hand()
         self.hand_pose(42)
         self.fake["mouse"]["right"] = True
         self.frames(2)
+        self.assertEqual(self.lines(), [], "not yet in the aim pose (in a driver's seat it never is)")
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(2)
         lines = self.lines()
         self.assertGreater(len(lines), 20)
-        self.assertAlmostEqual((lines[0][0] + lines[1][0]) / 2, -0.05, delta=0.02)   # from the detonator
+        self.assertAlmostEqual((lines[0][0] + lines[1][0]) / 2, 0.42, delta=0.02)   # from the detonator
+        self.assertAlmostEqual((lines[0][2] + lines[1][2]) / 2, 2.05, delta=0.02)   # 1 m above it
         # thrown: no arc for 0.8 s while the arm swings, then again
         self.fake["mouse"]["left"] = True
         self.frames(2)
@@ -396,14 +419,57 @@ class ArcTest(unittest.TestCase):
     def test_hand_pose_found_later(self):
         # the variable not there yet at first: looked for again 5 s later
         self.c4_in_hand()
-        self.fake["mouse"]["right"] = True
-        self.frames(2)
-        self.fake["mouse"]["right"] = False
+        self.c4_object(80)
+        self.frames(30)
+        self.assertEqual(self.shapes(), [])
         self.hand_pose(42)
         self.frames(330)
+        self.assertGreater(len(self.shapes()), 0)
+
+    def test_c4_put_away_while_aiming(self):
+        # the hand pose stays C4 a moment while it is put away; the detonator leaving the aim pose ends the arc
+        det = self.c4_in_hand()
+        self.hand_pose(42)
         self.fake["mouse"]["right"] = True
         self.frames(2)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(2)
         self.assertGreater(len(self.lines()), 20)
+        self.lua.eval("function(u) u.x, u.z = -0.1, 0.9 end")(det)
+        self.frames(2)
+        self.assertEqual(self.lines(), [])
+
+    def test_swapped_detonator(self):
+        # the C4 dropped (not carried any more) is let go and the one carried is read
+        self.c4_in_hand()
+        self.hand_pose(42)
+        self.c4_object(80)
+        self.frames(10)
+        self.assertEqual(self.shapes().count("rect"), 14)
+        self.lua.eval("""function(f)
+          f.E['GameSession.objects_owned_by'] = function() return { 3, 7, 8 } end
+          f.E['GameSession.game_object_is_type'] = function(gs, id, t) return t == 'kbv6zx' and (id == 7 or id == 8) end
+          f.E['GameSession.game_object_field'] = function(gs, id, name)
+            if name == 'n5jmvf' then return id == 8 and 0 or 2 end
+            if name == 'ozvglfc' then return id == 8 and 336 or 80 end
+          end
+        end""")(self.fake)
+        self.frames(150)
+        self.assertEqual(self.shapes().count("ring"), 2, "the new detonator's mode")
+
+    def vehicle_at(self, x, y, z):
+        return self.add_unit("cc21c7ffd3ebefb9", x, y, z)
+
+    def test_no_icon_in_a_vehicle(self):
+        self.c4_in_hand()
+        self.hand_pose(42)
+        self.c4_object(80)
+        car = self.vehicle_at(2.2, 0, -0.6)        # seated: 2.2 m from its middle, 0.6 m above its base
+        self.frames(40)
+        self.assertEqual(self.shapes(), [])
+        self.lua.eval("function(u) u.z = 0 end")(car)   # standing by it on the ground
+        self.frames(40)
+        self.assertGreater(len(self.shapes()), 0)
 
     def test_c4_pose_other_weapon_draws_nothing(self):
         # another weapon in hand (pose 10): the detonator going forward is no aim
@@ -497,14 +563,17 @@ class ArcTest(unittest.TestCase):
         self.wear("SA-25 Steel Trooper")
         self.aim(15)
         self.assertIn("throw range +30%", self.logs())
-        self.assertAlmostEqual(self.drawn_speed(15 + 9), 26.4, delta=0.1)
+        self.assertAlmostEqual(self.drawn_speed(15 + 7.8), 26.4, delta=0.1)
         self.fake["mouse"]["left"] = False
+        self.ball.dead = True                       # thrown
         self.frames(2)
-        self.c4_in_hand()
+        det = self.c4_in_hand()
         self.fake["grip"] = 42
         self.fake["mouse"]["right"] = True
         self.frames(2)
-        self.assertAlmostEqual(self.drawn_speed(15 + 6.4), 29.1, delta=0.1)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(2)
+        self.assertAlmostEqual(self.drawn_speed(15 + 4.4), 29.1, delta=0.1)
 
     def test_a_lookalike_without_the_perk(self):
         # FS-23 Battle Master shares 20 of TR-62 Knight's 23 units, but throws no farther
