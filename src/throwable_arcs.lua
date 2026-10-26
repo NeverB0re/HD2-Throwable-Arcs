@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.3'
+local VERSION = '1.0.1-test.4'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -321,9 +321,17 @@ local C4_DET = '51f50d6321f52f3d'
 local C4_SPEED, C4_LIFT, C4_RELEASE_UP = 22.4, math.rad(4.4), 1.0
 local C4_PUSH, C4_KEEP, C4_RIGHT, C4_HIGH = 0.1, 0.05, 0.15, 1.6
 -- Leaning out of a vehicle's window to aim, the detonator gets 1.15-1.2 m from my feet across (1.0.1-test.2): its hand
--- reaches C4_HAND m. Prone it lies under C4_PRONE_UP m above my feet, about 0.7 m off, and right moves it not at all
--- (1.0.1-test.2): there, C4 in hand (the hand pose) and right held is the aim.
-local C4_HAND, C4_PRONE_UP = 1.6, 0.25
+-- reaches C4_HAND m. Prone it lies under C4_PRONE_UP m above my feet (0.06-0.46 m; crouched it is 0.51 m up or
+-- more), and right moves it not at all (1.0.1-test.2; looking behind, test.3 found it anywhere from 0 to 0.6 m off my
+-- feet): there, C4 in hand (the hand pose) and right held is the aim.
+-- Diving, the hand pose reads 40 (as with a grenade) while the detonator lies low on my left (1.0.1-test.3): within
+-- C4_DIVE s of C4's pose, 40 with the detonator low counts as C4.
+-- Seated in a vehicle, aiming behind brings the detonator in to 0.1-0.2 m from my feet (1.0.1-test.3): there an aim
+-- once begun (leaning out moves it outward; in the driver's seat it never begins) is kept while right is held and C4 is
+-- in hand.
+local C4_HAND, C4_PRONE_UP, C4_DIVE, DIVE_GRIP = 1.6, 0.5, 2, 40
+local c4_grip_at, grip_next = -100, 0   -- when C4's hand pose was last seen, and is next looked at with right up
+local in_vehicle                 -- function() below (the icon's)
 local C4_GRIP, C4_REARM = 42, 0.8
 local c4_rearm = 0
 local det_watch = chef.watch and chef.watch({ [C4_DET] = true }, 0.5)
@@ -438,7 +446,9 @@ local function hand_pose()
   end
   if type(idx) ~= 'number' then return nil end
   local v = chef.call_kind('Unit.animation_get_variable', PLAYER, u, idx)
-  return type(v) == 'number' and math.floor(v + 0.5) or nil
+  v = type(v) == 'number' and math.floor(v + 0.5) or nil
+  if v == C4_GRIP then c4_grip_at = now() end
+  return v
 end
 
 local function read_c4(c)
@@ -448,17 +458,23 @@ local function read_c4(c)
     if det_watch then det_watch.refresh() end
   end
   local held = false
+  if not right and now() >= grip_next then
+    grip_next = now() + 0.2
+    update_feet(c)
+    hand_pose()
+  end
   if right and not aiming and det_watch then
     update_feet(c)
     local u, ahead, side, high = det_in_hand(c)
     local grip = hand_pose()
+    if grip == DIVE_GRIP and u and high < C4_PRONE_UP and now() - c4_grip_at <= C4_DIVE then grip = C4_GRIP end
     local ready = false
     if u and (grip == nil or grip == C4_GRIP) then
       local across = math.sqrt(ahead * ahead + side * side)
       c4_least = math.min(c4_least or across, across)
       ready = (grip ~= nil or side >= C4_RIGHT) and high <= C4_HIGH
               and across - c4_least >= (c4_aim and C4_KEEP or C4_PUSH)
-      if grip == C4_GRIP and high < C4_PRONE_UP then ready = true end
+      if grip == C4_GRIP and (high < C4_PRONE_UP or (c4_aim and in_vehicle())) then ready = true end
     end
     if c4_aim and left then c4_rearm = now() + C4_REARM end
     held = ready == true and not left and now() >= c4_rearm and c4_mode(not c4_aim) ~= 'detonate'
@@ -473,6 +489,12 @@ end
 -- ------------------------------------------------------------------ drawing
 local COLOR = { 255, 255, 255 }
 local WIDTH = 3                  -- px: the arc's width on the screen
+-- Below native Render Scale (with anti-aliasing on) parts of the arc came out faint blue: the game draws the scene at
+-- the lower resolution, and its temporal anti-aliasing blends a line a pixel or two wide there into what is around it.
+-- There the arc is 3 lines a render pixel apart, 3 render pixels wide. The render scale: the game's settings file's
+-- render resolution over the screen's height, read every SCALE_EVERY s.
+local SCALE_EVERY = 2
+local render_scale, scale_next = 1, 0
 -- the arc is dashed by flight time: DASH segments drawn, GAP left out (about 1.3 m and 0.7 m). test.10-11 measured
 -- dashes in px from the camera, so they slid along the arc whenever the camera moved: it rippled as you turned
 local DASH, GAP = 2, 1
@@ -512,7 +534,7 @@ end
 
 -- the arc dashed (segment i drawn unless it falls in a gap), each drawn segment as 2 lines side by side, about WIDTH
 -- px across, across the view (test.12 drew 3)
-local function world_strip(c, pts, col, px_angle)
+local function world_strip(c, pts, col, px_angle, offsets)
   for i = 2, #pts do
     if (i - 2) % (DASH + GAP) < DASH then
       local p, q = pts[i - 1], pts[i]
@@ -521,10 +543,11 @@ local function world_strip(c, pts, col, px_angle)
       local nx, ny, nz = dy * mz - dz * my, dz * mx - dx * mz, dx * my - dy * mx
       local nl = math.sqrt(nx * nx + ny * ny + nz * nz)
       if nl > 1e-9 then
-        local k = math.sqrt(mx * mx + my * my + mz * mz) * px_angle * (WIDTH - 1) / 2 / nl
-        nx, ny, nz = nx * k, ny * k, nz * k
-        chef.line(p[1] + nx, p[2] + ny, p[3] + nz, q[1] + nx, q[2] + ny, q[3] + nz, col)
-        chef.line(p[1] - nx, p[2] - ny, p[3] - nz, q[1] - nx, q[2] - ny, q[3] - nz, col)
+        local k = math.sqrt(mx * mx + my * my + mz * mz) * px_angle / nl
+        for _, o in ipairs(offsets) do
+          local ox, oy, oz = nx * k * o, ny * k * o, nz * k * o
+          chef.line(p[1] + ox, p[2] + oy, p[3] + oz, q[1] + ox, q[2] + oy, q[3] + oz, col)
+        end
       end
     end
   end
@@ -532,10 +555,20 @@ end
 
 local drew = false
 
+local NATIVE = { -(WIDTH - 1) / 2, (WIDTH - 1) / 2 }   -- px off the arc's middle, 2 lines
+
 local function draw_arc(c)
   local _, sh = chef.screen()
+  if now() >= scale_next and chef.setting then
+    scale_next = now() + SCALE_EVERY
+    local r = chef.setting('render_settings.render_resolution')
+    local rh = type(r) == 'table' and tonumber(r[2])
+    render_scale = (rh and sh and sh > 0) and math.min(1, rh / sh) or 1
+  end
   local px_angle = (tonumber(c.fov) or 0.96) / math.max(1, sh or 1080)
-  world_strip(c, path(c), chef.color(COLOR[1], COLOR[2], COLOR[3], 255), px_angle)
+  local offsets = NATIVE
+  if render_scale < 0.95 then offsets = { -1 / render_scale, 0, 1 / render_scale } end
+  world_strip(c, path(c), chef.color(COLOR[1], COLOR[2], COLOR[3], 255), px_angle, offsets)
   drew = true
 end
 
@@ -569,7 +602,7 @@ local VEHICLE_NEAR, VEHICLE_SEAT, VEHICLE_UP = 1.2, 3, 0.35
 local vehicle_watch = chef.watch and chef.watch(VEHICLES, 0.5)
 local on_vehicle = nil           -- test builds: function(across, up) for the nearest vehicle within 5 m
 
-local function in_vehicle()
+in_vehicle = function()
   if not (vehicle_watch and me) then return false end
   local best, bup
   for _, it in ipairs(vehicle_watch.items) do

@@ -15,7 +15,7 @@ _spec.loader.exec_module(ta_build)   # the mod's build.py: the source with its a
 
 FAKE = r"""
 local fake = { t = 0, logs = {}, down = {}, pressed = {}, mouse = {}, wheel = 0, lines = {}, calls = {}, cam = nil,
-               watches = {}, saved = {}, opts = {}, changes = {}, shapes = {} }
+               watches = {}, saved = {}, opts = {}, changes = {}, shapes = {}, settings = {} }
 local world = newproxy(true)
 
 local PLAYER = '4d1c334d294dfa97'
@@ -82,6 +82,7 @@ chef = {
   triangle = function(...) fake.shapes[#fake.shapes + 1] = 'triangle' end,
   circle = function(...) fake.shapes[#fake.shapes + 1] = 'circle' end,
   ring = function(...) fake.shapes[#fake.shapes + 1] = 'ring' end,
+  setting = function(path) return fake.settings[path] end,
   bind = function(id, default)
     fake.bound = fake.bound or default
     return { key = function() return fake.bound end, down = function() return fake.down[fake.bound] == true end }
@@ -471,6 +472,66 @@ class ArcTest(unittest.TestCase):
         self.lua.eval("function(f) f.cam.x = -9 end")(self.fake)
         self.frames(3)
         self.assertGreater(len(self.lines()), 20)
+
+    def test_thicker_below_native_render_scale(self):
+        self.lua.eval("function(f) f.settings['render_settings.render_resolution'] = { 1129, 600 } end")(self.fake)
+        self.aim(10)
+        lines = self.lines()
+        self.assertGreater(len(lines), 30)
+        self.assertEqual(len(lines) % 3, 0, "3 lines a segment, not 2")
+        # 2 render pixels across between the outer two (render scale 0.5 of 1200: 2 px each)
+        a, b = lines[30], lines[32]
+        mid = [(a[i] + a[i + 3]) / 2 for i in range(3)]
+        width_px = math.dist(a[:3], b[:3]) / (math.dist(mid, (0, 0, 2)) * 0.96 / 1200)
+        self.assertAlmostEqual(width_px, 4, delta=0.2)
+
+    def test_c4_prone_looking_behind(self):
+        # lying down, looking behind: the detonator 0.4 m up and close to my feet, still the aim
+        self.add_unit("51f50d6321f52f3d", -0.12, -0.18, 0.40)
+        self.hand_pose(42)
+        self.frames(2)
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+
+    def test_c4_diving(self):
+        # diving: the hand pose reads 40 a moment after C4's 42, the detonator low on my left
+        det = self.add_unit("51f50d6321f52f3d", 0.0, -0.4, 1.05)
+        self.hand_pose(42)
+        self.frames(10)
+        self.lua.eval("function(u) u.x, u.y, u.z = 0.1, 0.22, 0.14 end")(det)
+        self.fake["grip"] = 40
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+        self.fake["mouse"]["right"] = False
+        self.frames(200)                            # a grenade in hand long after: not C4
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.assertEqual(self.lines(), [])
+
+    def test_c4_passenger_aiming_behind(self):
+        det = self.c4_in_hand()
+        self.hand_pose(42)
+        self.vehicle_at(0.4, 0.3, -0.6)             # seated
+        self.frames(2)
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)   # leaning out
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+        self.lua.eval("function(u) u.x, u.y = -0.1, -0.1 end")(det)   # aiming behind: close in
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+
+    def test_c4_driver_seat(self):
+        # seated, right held, the detonator never leans out: no arc
+        self.c4_in_hand()
+        self.hand_pose(42)
+        self.vehicle_at(0.4, 0.3, -0.6)
+        self.fake["mouse"]["right"] = True
+        self.frames(30)
+        self.assertEqual(self.lines(), [])
 
     def test_swapped_detonator(self):
         # the C4 dropped (not carried any more) is let go and the one carried is read
