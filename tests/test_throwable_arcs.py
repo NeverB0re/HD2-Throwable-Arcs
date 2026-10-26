@@ -451,6 +451,27 @@ class ArcTest(unittest.TestCase):
         self.frames(2)
         self.assertGreater(len(self.lines()), 20)
 
+    def test_c4_prone(self):
+        # lying down the detonator lies low and right doesn't move it: C4 in hand and right is the aim
+        self.add_unit("51f50d6321f52f3d", 0.67, -0.18, 0.06)
+        self.hand_pose(42)
+        self.frames(2)
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+
+    def test_c4_passenger_leaning_out(self):
+        # seated, leaning out to aim up: the camera far off and the detonator 1.4 m from my feet
+        det = self.c4_in_hand()
+        self.hand_pose(42)
+        self.frames(2)                              # found on foot first
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.lua.eval("function(u) u.x, u.y = 0.9, -1.07 end")(det)
+        self.lua.eval("function(f) f.cam.x = -9 end")(self.fake)
+        self.frames(3)
+        self.assertGreater(len(self.lines()), 20)
+
     def test_swapped_detonator(self):
         # the C4 dropped (not carried any more) is let go and the one carried is read
         self.c4_in_hand()

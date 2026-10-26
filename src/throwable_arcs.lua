@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.2'
+local VERSION = '1.0.1-test.3'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -40,10 +40,22 @@ local function camera_pitch(c) return math.atan2(c.fz, math.sqrt(c.fx * c.fx + c
 local players = chef.watch and chef.watch({ [PLAYER] = true }, 2)
 local feet_z, me = nil, nil      -- me: { x, y, z } of my helldiver (its feet)
 local me_unit = nil              -- my helldiver's unit
+-- Mine is the helldiver nearest the camera within 6 m across; once found it is kept while it is within KEEP_ME m: a
+-- vehicle's camera is farther off (1.0.1-test.2 lost me in a passenger seat, aiming up), and others sit nearer to it.
+local KEEP_ME = 15
+local mine = nil
 
 local function update_feet(c)
   feet_z, me, me_unit = nil, nil, nil
   if not players then return end
+  if mine and chef.unit_alive(mine) then
+    local x, y, z = chef.unit_position(mine)
+    if x and (x - c.x) ^ 2 + (y - c.y) ^ 2 < KEEP_ME * KEEP_ME then
+      feet_z, me, me_unit = z, { x, y, z }, mine
+      return
+    end
+  end
+  mine = nil
   local best
   for _, it in ipairs(players.items) do
     if chef.unit_alive(it.unit) then
@@ -54,6 +66,7 @@ local function update_feet(c)
       end
     end
   end
+  mine = me_unit
 end
 
 -- ------------------------------------------------------------------ my armour (the throw-range perks)
@@ -307,6 +320,10 @@ end
 local C4_DET = '51f50d6321f52f3d'
 local C4_SPEED, C4_LIFT, C4_RELEASE_UP = 22.4, math.rad(4.4), 1.0
 local C4_PUSH, C4_KEEP, C4_RIGHT, C4_HIGH = 0.1, 0.05, 0.15, 1.6
+-- Leaning out of a vehicle's window to aim, the detonator gets 1.15-1.2 m from my feet across (1.0.1-test.2): its hand
+-- reaches C4_HAND m. Prone it lies under C4_PRONE_UP m above my feet, about 0.7 m off, and right moves it not at all
+-- (1.0.1-test.2): there, C4 in hand (the hand pose) and right held is the aim.
+local C4_HAND, C4_PRONE_UP = 1.6, 0.25
 local C4_GRIP, C4_REARM = 42, 0.8
 local c4_rearm = 0
 local det_watch = chef.watch and chef.watch({ [C4_DET] = true }, 0.5)
@@ -391,7 +408,7 @@ local function det_in_hand(c)
       if x then
         local dx, dy, up = x - me[1], y - me[2], z - me[3]
         local across = math.sqrt(dx * dx + dy * dy)
-        if across <= HAND and up >= HAND_LOW and up <= HAND_HIGH and (not best or across < best) then
+        if across <= C4_HAND and up >= HAND_LOW and up <= HAND_HIGH and (not best or across < best) then
           best, bu, ahead, side, high = across, u, dx * hx + dy * hy, dx * hy - dy * hx, up
         end
       end
@@ -441,6 +458,7 @@ local function read_c4(c)
       c4_least = math.min(c4_least or across, across)
       ready = (grip ~= nil or side >= C4_RIGHT) and high <= C4_HIGH
               and across - c4_least >= (c4_aim and C4_KEEP or C4_PUSH)
+      if grip == C4_GRIP and high < C4_PRONE_UP then ready = true end
     end
     if c4_aim and left then c4_rearm = now() + C4_REARM end
     held = ready == true and not left and now() >= c4_rearm and c4_mode(not c4_aim) ~= 'detonate'
@@ -622,45 +640,20 @@ on_vehicle = function(across, up)
   local text = string.format('%.1f m across, %.1f m up', across, up)
   if text ~= said_vehicle then said_vehicle = text; log('nearest vehicle: %s', text) end
 end
--- While C4 is in my hand or right is held: where the detonator is from my feet (prone gave no arc; the aim pose there
--- is unknown), the hand pose, the arc, and the animation variables of my helldiver found among some likely names (an
--- aim value would be the best sign of the aim), every 0.1 s when something changed.
-local ANIM_NAMES = { 'aim', 'aiming', 'is_aiming', 'aim_weight', 'aim_blend', 'aim_amount', 'aim_state', 'aim_mode',
-  'aim_type', 'aim_down_sight', 'aim_down_sights', 'ads', 'ads_weight', 'zoom', 'zoomed', 'scope', 'aim_pitch',
-  'aim_yaw', 'aim_x', 'aim_y', 'look_pitch', 'look_yaw', 'upperbody_aim', 'upper_body', 'upper_body_weight', 'weapon_aim',
-  'weapon_raised', 'weapon_lowered', 'weapon_state', 'weapon_mode', 'weapon_type', 'weapon_equipped', 'weapon_held',
-  'weapon_slot', 'selected_weapon', 'item_selected', 'equip', 'equipped', 'unequip', 'holster', 'holstered', 'wield',
-  'throw', 'throwing', 'throw_charge', 'throw_ready', 'throw_state', 'throw_aim', 'grenade', 'grenade_aim', 'stratagem',
-  'prone', 'is_prone', 'crouch', 'crouching', 'is_crouching', 'stance', 'posture', 'move_speed', 'speed', 'moving',
-  'sprint', 'sprinting', 'in_vehicle', 'vehicle', 'seated', 'sitting', 'seat', 'driver', 'passenger', 'mounted',
-  'driving', 'on_ground', 'falling', 'reload', 'reloading', 'firing', 'fire', 'recoil', 'lean', 'turn', 'turn_speed' }
-local anim_found, det_said, det_next = nil, nil, 0
+-- While C4 is in my hand or right is held: where the detonator is from my feet, the hand pose and the arc, every 0.1 s
+-- when something changed (1.0.1-test.2 also looked for an aim value among the animation variables: of some 90 likely
+-- names only throw_charge, move_speed and turn_speed are there, and throw_charge stays 0 with C4).
+local det_said, det_next = nil, 0
 local function log_det(c)
   if now() < det_next then return end
   det_next = now() + 0.1
   local u = me_unit
   if not (u and chef.unit_alive(u)) then return end
-  if anim_found == nil and chef.call_kind('Unit.has_animation_state_machine', PLAYER, u) == true then
-    anim_found = {}
-    local names = {}
-    for _, name in ipairs(ANIM_NAMES) do
-      if chef.call_kind('Unit.animation_has_variable', PLAYER, u, name) == true then
-        local i = chef.call_kind('Unit.animation_find_variable', PLAYER, u, name)
-        if type(i) == 'number' then anim_found[#anim_found + 1] = { name, i }; names[#names + 1] = name .. '#' .. i end
-      end
-    end
-    log('animation variables found: %s', #names > 0 and table.concat(names, ' ') or 'none of the names')
-  end
   local grip = hand_pose()
   if grip ~= C4_GRIP and chef.mouse_down('right') ~= true then det_said = nil return end
   local d, ahead, side, high = det_in_hand(c)
-  local vals = {}
-  for _, f in ipairs(anim_found or {}) do
-    local v = chef.call_kind('Unit.animation_get_variable', PLAYER, u, f[2])
-    vals[#vals + 1] = f[1] .. '=' .. (type(v) == 'number' and string.format('%.2f', v) or tostring(v))
-  end
-  local text = string.format('pose %s, right %s, arc %s; %s', tostring(grip), tostring(chef.mouse_down('right') == true),
-                             tostring(c4_aim), table.concat(vals, ' '))
+  local text = string.format('pose %s, right %s, arc %s', tostring(grip), tostring(chef.mouse_down('right') == true),
+                             tostring(c4_aim))
   local place = d and string.format('%.2f ahead %.2f right %.2f up (%.2f across)', ahead, side, high,
                                     math.sqrt(ahead * ahead + side * side)) or 'not in hand'
   local said = det_said
