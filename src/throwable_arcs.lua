@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.5'
+local VERSION = '1.0.1-test.6'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -606,10 +606,12 @@ local icon_mode, icon_next = nil, 0
 
 -- In a vehicle the icon is left out (1.0.0 kept it up there): my helldiver seated in one is within VEHICLE_NEAR m of
 -- its middle across, or within VEHICLE_SEAT m and VEHICLE_UP m or more above its base (standing by one, my feet are on
--- the ground). The vehicles: the FRVs, the tanks and the exosuit (filediver's names, as in Extended Pickup Icons Range).
+-- the ground). Seats measured: an FRV's 0.4-0.7 m off its middle and 0.6 m up, a tank's on its top 3.1 m off and 2.4 m
+-- up (1.0.1-test.1-5; standing by an FRV, 2 m off and 0.4 m under its base). The vehicles: the FRVs, the tanks and the
+-- exosuit (filediver's names, as in Extended Pickup Icons Range).
 local VEHICLES = { cc21c7ffd3ebefb9 = true, ['2d85bfe3d8717fe5'] = true, ['9b2140378640432e'] = true,
                    ['16474112801385b6'] = true, b0c9faf4af8903f9 = true, ['79e4b3d2da5e45e3'] = true }
-local VEHICLE_NEAR, VEHICLE_SEAT, VEHICLE_UP = 1.2, 3, 0.35
+local VEHICLE_NEAR, VEHICLE_SEAT, VEHICLE_UP = 1.2, 4.5, 0.35
 local vehicle_watch = chef.watch and chef.watch(VEHICLES, 0.5)
 local on_vehicle = nil           -- test builds: function(across, up) for the nearest vehicle within 5 m
 
@@ -625,7 +627,7 @@ in_vehicle = function()
       end
     end
   end
-  if best and best < 5 and on_vehicle then on_vehicle(best, bup) end
+  if best and best < 6 and on_vehicle then on_vehicle(best, bup) end
   return best ~= nil and (best < VEHICLE_NEAR or (best < VEHICLE_SEAT and bup >= VEHICLE_UP))
 end
 

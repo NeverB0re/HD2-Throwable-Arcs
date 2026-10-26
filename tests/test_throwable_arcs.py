@@ -533,6 +533,21 @@ class ArcTest(unittest.TestCase):
         self.frames(2)
         self.assertGreater(len(self.lines()), 20)
 
+    def test_c4_tank_seat(self):
+        # on a tank's top, 3.1 m off its middle and 2.4 m up: in a vehicle, the aim kept as the detonator comes in
+        det = self.c4_in_hand()
+        self.hand_pose(42)
+        self.add_unit("16474112801385b6", 3.1, 0, -2.4)
+        self.frames(2)
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+        self.lua.eval("function(u) u.x, u.y = 0.3, -0.3 end")(det)   # back to 0.42 m off: still kept
+        self.frames(30)
+        self.assertGreater(len(self.lines()), 20)
+
     def test_c4_driver_seat(self):
         # seated, right held, the detonator never leans out (and sits low, 0.46 m up): no arc
         self.add_unit("51f50d6321f52f3d", 0.06, -0.25, 0.46)
