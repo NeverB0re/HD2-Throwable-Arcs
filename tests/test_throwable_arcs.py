@@ -603,6 +603,24 @@ class ArcTest(unittest.TestCase):
     def vehicle_at(self, x, y, z):
         return self.add_unit("cc21c7ffd3ebefb9", x, y, z)
 
+    def test_icon_in_a_vehicle_while_aiming(self):
+        # seated, the icon only while C4 is aimed (a passenger leaning out), DETONATE too (no arc there)
+        det = self.c4_in_hand()
+        self.hand_pose(42)
+        self.c4_object(336)
+        self.vehicle_at(0.4, 0.3, -0.6)
+        self.frames(40)
+        self.assertEqual(self.shapes(), [])
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)   # leaning out
+        self.frames(10)
+        self.assertEqual(len(self.shapes()), 1, "the icon")
+        self.assertEqual(self.lines(), [], "DETONATE: no arc")
+        self.fake["mouse"]["right"] = False
+        self.frames(10)
+        self.assertEqual(self.shapes(), [])
+
     def test_no_icon_in_a_vehicle(self):
         self.c4_in_hand()
         self.hand_pose(42)

@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.7'
+local VERSION = '1.0.1-test.9'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -339,6 +339,7 @@ local C4_GRIP, C4_REARM = 42, 0.8
 local c4_rearm = 0
 local det_watch = chef.watch and chef.watch({ [C4_DET] = true }, 0.5)
 local was_right, c4_aim, c4_det, c4_least = false, false, nil, nil
+local c4_posed = false           -- in C4's aim pose (DEPLOY or DETONATE alike; c4_aim: and the arc drawn)
 
 -- C4's mode: DEPLOY (a charge in hand, thrown) or DETONATE (the detonator in hand; right drew the arc there too in
 -- test.27). Read as NarrowHUD (luka189, Nexus 17882) reads it: the C4 is a network game object of mine, of the type
@@ -460,7 +461,7 @@ local function read_c4(c)
     c4_least = nil
     if det_watch then det_watch.refresh() end
   end
-  local held = false
+  local held, posed = false, false
   if not right and now() >= grip_next then
     grip_next = now() + 0.2
     update_feet(c)
@@ -470,30 +471,31 @@ local function read_c4(c)
     update_feet(c)
     local u, ahead, side, high = det_in_hand(c)
     local grip = hand_pose()
-    if grip == DIVE_GRIP and u and (c4_aim or high < C4_PRONE_UP) and now() - c4_grip_at <= C4_DIVE then grip = C4_GRIP end
+    if grip == DIVE_GRIP and u and (c4_posed or high < C4_PRONE_UP) and now() - c4_grip_at <= C4_DIVE then grip = C4_GRIP end
     local ready = false
     if u and (grip == nil or grip == C4_GRIP) then
       local across = math.sqrt(ahead * ahead + side * side)
       c4_least = math.min(c4_least or across, across)
       ready = (grip ~= nil or side >= C4_RIGHT) and high <= C4_HIGH
-              and across - c4_least >= (c4_aim and C4_KEEP or C4_PUSH)
+              and across - c4_least >= (c4_posed and C4_KEEP or C4_PUSH)
       if grip == C4_GRIP then
         if in_vehicle() then
-          if c4_aim then ready = true end
+          if c4_posed then ready = true end
         elseif high < C4_LOW_UP then
           ready = true
         end
       end
       if ready then c4_ready_at = now() end
-      if c4_aim and not ready and grip == C4_GRIP and now() - c4_ready_at < C4_GRACE then ready = true end
+      if c4_posed and not ready and grip == C4_GRIP and now() - c4_ready_at < C4_GRACE then ready = true end
     end
     if c4_aim and left then c4_rearm = now() + C4_REARM end
-    held = ready == true and not left and now() >= c4_rearm and c4_mode(not c4_aim) ~= 'detonate'
+    posed = ready == true and not left and now() >= c4_rearm
+    held = posed and c4_mode(not c4_posed) ~= 'detonate'
     if held and not c4_aim then find_armour() end
     if held then c4_det = u or c4_det end
   end
   was_right = right
-  c4_aim = held
+  c4_aim, c4_posed = held, posed
   if not held then c4_det = nil end
 end
 
@@ -615,7 +617,8 @@ if chef.has and chef.has('menu') then
 end
 local icon_mode, icon_next = nil, 0
 
--- In a vehicle the icon is left out (1.0.0 kept it up there): my helldiver seated in one is within VEHICLE_NEAR m of
+-- In a vehicle the icon shows only in C4's aim pose (1.0.0 kept it up all the time; 1.0.1-test.1-7 left it out): a
+-- passenger leans out to aim, the driver can't aim. My helldiver seated in one is within VEHICLE_NEAR m of
 -- its middle across, or within VEHICLE_SEAT m and VEHICLE_UP m or more above its base (standing by one, my feet are on
 -- the ground). Seats measured: an FRV's 0.4-0.7 m off its middle and 0.6 m up, a tank's on its top 3.1 m off and 2.4 m
 -- up (1.0.1-test.1-5; standing by an FRV, 2 m off and 0.4 m under its base). The vehicles: the FRVs, the tanks and the
@@ -692,7 +695,7 @@ local function c4_icon(c)
   if now() >= icon_next then
     icon_next = now() + 0.1
     update_feet(c)
-    icon_mode = hand_pose() == C4_GRIP and not in_vehicle() and c4_mode(true) or nil
+    icon_mode = hand_pose() == C4_GRIP and (c4_posed or not in_vehicle()) and c4_mode(true) or nil
   end
   if icon_mode then draw_icon(icon_mode) end
 end
@@ -746,7 +749,7 @@ function M.update(dt)
   if said_world ~= chef.world_id() then
     said_world = chef.world_id()
     ball, aiming, looking = nil, false, false
-    c4_aim, c4_det = false, nil
+    c4_aim, c4_posed, c4_det = false, false, nil
   end
   read_input(c)
   read_c4(c)
