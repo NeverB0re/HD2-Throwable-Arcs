@@ -1,4 +1,4 @@
-"""Build Throwable Arcs into a mod zip (HD2 Arsenal, Modocracy):  python build.py -> dist/Throwable Arcs v<version>.zip
+"""Build Stratagem and C4 Trajectory into a mod zip (HD2 Arsenal, Modocracy):  python build.py -> dist/Stratagem and C4 Trajectory v<version>.zip
 
 A test version (e.g. 0.1.0-test.1) is also copied to test-builds/, a release to release/. The patch holds the Lua and
 C4's two mode icons (src/c4_*.png, made by tools/c4_icons.py) at a few sizes. Its header comes from Extended Pickup
@@ -25,7 +25,7 @@ ICON_SIZES = (24, 32, 48, 76)    # px: the icon is drawn 26-52 px tall (1080p to
 DIST = os.path.join(HERE, "dist")
 TEST_BUILDS = os.path.join(HERE, "test-builds")
 RELEASE = os.path.join(HERE, "release")
-NAME = "Throwable Arcs"
+NAME = "Stratagem and C4 Trajectory"
 FOLDER = "Addon"
 RESOURCE = "mods/codex/throwable_arcs"
 ARCHIVE = "9ba626afa44a3aa3.patch_0"

@@ -1,4 +1,4 @@
-[size=6][b]Throwable Arcs[/b][/size]
+[size=6][b]Stratagem and C4 Trajectory[/b][/size]
 See where your stratagem ball or C4 charge will land before you throw it.
 
 [size=5][b]What it does[/b][/size]
@@ -15,7 +15,7 @@ See where your stratagem ball or C4 charge will land before you throw it.
 [/list]
 
 [size=5][b]Settings[/b][/size]
-Press [b]F9[/b] in the game to open Chef Shared Loader's options menu, then pick [b]Throwable Arcs[/b]:
+Press [b]F9[/b] in the game to open Chef Shared Loader's options menu, then pick [b]Stratagem and C4 Trajectory[/b]:
 [list]
 [*][b]C4 mode icon by the crosshair[/b] (on by default): turn it off if another HUD mod already shows C4's mode.
 [/list]
@@ -75,7 +75,7 @@ Source: https://github.com/NeverB0re/HD2-Throwable-Arcs
 [/list]
 
 [size=5][b]설정[/b][/size]
-게임 중에 [b]F9[/b]를 누르면 Chef Shared Loader의 옵션 메뉴가 열립니다. [b]Throwable Arcs[/b]를 고르세요.
+게임 중에 [b]F9[/b]를 누르면 Chef Shared Loader의 옵션 메뉴가 열립니다. [b]Stratagem and C4 Trajectory[/b]를 고르세요.
 [list]
 [*][b]C4 mode icon by the crosshair[/b](기본값 켜짐): 다른 HUD 모드가 이미 C4 모드를 보여 준다면 끄세요.
 [/list]

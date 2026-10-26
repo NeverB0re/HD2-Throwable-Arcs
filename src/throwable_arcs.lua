@@ -1,5 +1,5 @@
 -- HD2-Addon: mods/codex/throwable_arcs
--- Throwable Arcs: while a stratagem ball is in my hand and left mouse is held, or C4 is aimed with right mouse, draws
+-- Stratagem and C4 Trajectory (Throwable Arcs until 1.0.1): while a stratagem ball is in my hand and left mouse is held, or C4 is aimed with right mouse, draws
 -- where it will fly. The arc is a world line: the game hides it behind walls and ground, so where it goes into the
 -- ground is where it lands (the terrain can't be asked). Below native Render Scale the game clips the 3D scene's drawing
 -- to a corner of the screen when the game's anti-aliasing is off (with it on, it shows whole). The numbers are measured
@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1'
+local VERSION = '1.0.2'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -617,7 +617,7 @@ if type(ICONS) == 'table' and chef.texture_sizes then
 end
 local show_icon = true
 if chef.has and chef.has('menu') then
-  chef.title('Throwable Arcs')
+  chef.title('Stratagem and C4 Trajectory')
   show_icon = chef.option('c4_icon', { type = 'toggle', label = 'C4 mode icon by the crosshair', default = true }) ~= false
   chef.on_change('c4_icon', function(v) show_icon = v ~= false end)
 end
@@ -710,7 +710,7 @@ local said_world = nil
 function M.update(dt)
   if said_world == nil then
     said_world = false
-    log('Throwable Arcs %s, loader %s, api %s', VERSION, tostring(chef.loader_version), tostring(chef.api))
+    log('Stratagem and C4 Trajectory %s, loader %s, api %s', VERSION, tostring(chef.loader_version), tostring(chef.api))
   end
   local c = chef.camera()
   if not (chef.world() and c) then return end

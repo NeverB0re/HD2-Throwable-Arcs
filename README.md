@@ -1,4 +1,6 @@
-# Throwable Arcs
+# Stratagem and C4 Trajectory
+
+(Called Throwable Arcs until 1.0.1.)
 
 A **HELLDIVERS 2** mod that draws where your throw will fly while you aim it:
 
@@ -8,7 +10,7 @@ A **HELLDIVERS 2** mod that draws where your throw will fly while you aim it:
   crouched, prone, sliding, diving, and from a vehicle's passenger seats.
 - **C4 mode icon:** while C4 is in your hand, the game's DEPLOY or DETONATE icon sits beside the crosshair, so you
   always know whether you hold a charge or the detonator (in a vehicle, only while you aim). It can be turned off in
-  the options menu (F9 > Throwable Arcs), for players whose HUD mod already shows it.
+  the options menu (F9 > Stratagem and C4 Trajectory), for players whose HUD mod already shows it.
 
 The arc is a line in the 3D world: walls and ground hide it, so the point where it disappears into the terrain is
 where the throw lands. It starts where your hand lets go and follows your armour: Servo-Assisted and Desert Stormer
@@ -26,7 +28,7 @@ anything in the game.
 
 ## Install
 
-Add `release/Throwable Arcs v<version>.zip` in your mod manager (HD2 Arsenal / HD2 Mod Manager) next to Chef Shared
+Add `release/Stratagem and C4 Trajectory v<version>.zip` in your mod manager (HD2 Arsenal / HD2 Mod Manager) next to Chef Shared
 Loader and enable both.
 
 ## Layout
@@ -36,7 +38,7 @@ Loader and enable both.
 | `src/throwable_arcs.lua` | The mod (PUC Lua 5.1, runs inside Chef Shared Loader). `VERSION` is set here. |
 | `src/armour_table.lua` | Every named body armour: its throw-range bonus and its unit kinds, to tell the armour you wear. |
 | `src/c4_deploy.png`, `src/c4_detonate.png` | C4's mode icons (from the game's HUD atlas; `tools/c4_icons.py`). |
-| `build.py` | Builds `dist/Throwable Arcs v<VERSION>.zip`; a release is copied to `release/`, a test version to `test-builds/`. |
+| `build.py` | Builds `dist/Stratagem and C4 Trajectory v<VERSION>.zip`; a release is copied to `release/`, a test version to `test-builds/`. |
 | `tests/test_throwable_arcs.py` | Runs the mod against a fake loader (needs `lupa`). |
 | `PLAN.md` | The design notes and measurements from the test builds (Korean). |
 | `probe/` | Engine Probe, the test addon used to find what the game lets a mod read. |
