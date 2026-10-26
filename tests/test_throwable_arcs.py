@@ -439,6 +439,18 @@ class ArcTest(unittest.TestCase):
         self.frames(2)
         self.assertEqual(self.lines(), [])
 
+    def test_c4_aim_kept_while_turning(self):
+        # the camera turns ahead of my helldiver: the detonator, still as far from my feet, keeps the arc
+        det = self.c4_in_hand()
+        self.hand_pose(42)
+        self.fake["mouse"]["right"] = True
+        self.frames(2)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(2)
+        self.lua.eval("function(f) local p = math.rad(10); f.cam.fx, f.cam.fy = 0, 1 end")(self.fake)   # 90 degrees
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+
     def test_swapped_detonator(self):
         # the C4 dropped (not carried any more) is let go and the one carried is read
         self.c4_in_hand()

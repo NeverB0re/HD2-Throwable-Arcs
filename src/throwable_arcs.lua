@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.1'
+local VERSION = '1.0.1-test.2'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -293,17 +293,20 @@ end
 -- Without that variable, the hand alone: the C4 in my hand is the detonator's unit (filediver: equipment/backpacks/
 -- c4_charge_backpack/c4_charge_detonator; its charge is no unit until it flies, and my helldiver's 1 mesh never
 -- changes, test.24-25), held in my right hand (test.25, standing: about 0 ahead, 0.4 right, 1.05 up from my feet), and
--- right held it goes C4_PUSH m or more forward into the aim within 0.3 s; C4_RIGHT m or more to my right and not above
--- C4_HIGH m (the throw raises it to 2.05-2.11 m). The aim pose is asked for with the hand pose too (1.0.1): putting C4
--- away while aiming kept the pose a moment and drew the arc, and right in a vehicle's driver seat (no aiming there)
--- drew it as well.
+-- right held it goes forward into the aim within 0.3 s, from about 0.40 m from my feet across to 0.53-0.55 m; C4_RIGHT
+-- m or more to my right and not above C4_HIGH m (the throw raises it to 2.05-2.11 m). The aim pose is asked for with
+-- the hand pose too (1.0.1): putting C4 away while aiming kept the pose a moment and drew the arc, and right in a
+-- vehicle's driver seat (no aiming there) drew it as well. The aim pose: the detonator C4_PUSH m or more farther from
+-- my feet (across) than it was nearest since right went down; kept while it stays C4_KEEP m or more farther. Its
+-- distance, not how far ahead along the camera's heading (1.0.1-test.1): turning fast, my helldiver turns after the
+-- camera, and seated in a vehicle it faces the vehicle's way, and the arc came and went with the heading.
 -- After a throw, no arc for C4_REARM s: test.28 drew it again 0.2-0.3 s after each throw, from the arm still swinging
 -- (0.8 ahead, 1.3-1.6 m up).
 -- The charge is let go C4_RELEASE_UP m above the detonator in the aim pose (the arm swings up and throws from higher),
 -- at about 22.4 m/s, C4_LIFT above the camera's pitch: fitted on 5 measured throws (test.26-30), 0.1 m off along 1-40 m.
 local C4_DET = '51f50d6321f52f3d'
 local C4_SPEED, C4_LIFT, C4_RELEASE_UP = 22.4, math.rad(4.4), 1.0
-local C4_PUSH, C4_RIGHT, C4_HIGH = 0.2, 0.15, 1.6
+local C4_PUSH, C4_KEEP, C4_RIGHT, C4_HIGH = 0.1, 0.05, 0.15, 1.6
 local C4_GRIP, C4_REARM = 42, 0.8
 local c4_rearm = 0
 local det_watch = chef.watch and chef.watch({ [C4_DET] = true }, 0.5)
@@ -434,8 +437,10 @@ local function read_c4(c)
     local grip = hand_pose()
     local ready = false
     if u and (grip == nil or grip == C4_GRIP) then
-      c4_least = math.min(c4_least or ahead, ahead)
-      ready = side >= C4_RIGHT and high <= C4_HIGH and ahead - c4_least >= C4_PUSH
+      local across = math.sqrt(ahead * ahead + side * side)
+      c4_least = math.min(c4_least or across, across)
+      ready = (grip ~= nil or side >= C4_RIGHT) and high <= C4_HIGH
+              and across - c4_least >= (c4_aim and C4_KEEP or C4_PUSH)
     end
     if c4_aim and left then c4_rearm = now() + C4_REARM end
     held = ready == true and not left and now() >= c4_rearm and c4_mode(not c4_aim) ~= 'detonate'
@@ -528,7 +533,7 @@ end
 -- C4 is known for not showing which of its two is in the hand. While it is in mine (hand pose C4_GRIP) and its mode can
 -- be read, an icon to the right of the crosshair, drawn as the game's own: an arrow up over a charge for DEPLOY, a
 -- toothed ring for DETONATE. An option turns it off (another HUD mod may show it).
-local ICON_SIZE, ICON_GAP = 0.028, 0.03     -- of the screen's height: the icon's height, and from the centre to its left
+local ICON_SIZE, ICON_GAP = 0.024, 0.06     -- of the screen's height: the icon's height, and from the centre to its left
 local show_icon = true
 if chef.has and chef.has('menu') then
   chef.title('Throwable Arcs')
@@ -567,8 +572,8 @@ local function draw_icon(mode)
   if not (w and h) then return end
   local sz = math.floor(h * ICON_SIZE + 0.5)
   local layer = (chef.TOP or 0) + 1100      -- over the HUD and the map, under the menus
-  local ink = chef.color(250, 250, 236, 235)
-  local shade = chef.color(0, 0, 0, 150)
+  local ink = chef.color(250, 250, 236, 190)
+  local shade = chef.color(0, 0, 0, 110)
   -- a shadow 1/16 down and right, then the icon
   for pass = 1, 2 do
     local o = pass == 1 and math.max(1, sz / 16) or 0
@@ -617,6 +622,54 @@ on_vehicle = function(across, up)
   local text = string.format('%.1f m across, %.1f m up', across, up)
   if text ~= said_vehicle then said_vehicle = text; log('nearest vehicle: %s', text) end
 end
+-- While C4 is in my hand or right is held: where the detonator is from my feet (prone gave no arc; the aim pose there
+-- is unknown), the hand pose, the arc, and the animation variables of my helldiver found among some likely names (an
+-- aim value would be the best sign of the aim), every 0.1 s when something changed.
+local ANIM_NAMES = { 'aim', 'aiming', 'is_aiming', 'aim_weight', 'aim_blend', 'aim_amount', 'aim_state', 'aim_mode',
+  'aim_type', 'aim_down_sight', 'aim_down_sights', 'ads', 'ads_weight', 'zoom', 'zoomed', 'scope', 'aim_pitch',
+  'aim_yaw', 'aim_x', 'aim_y', 'look_pitch', 'look_yaw', 'upperbody_aim', 'upper_body', 'upper_body_weight', 'weapon_aim',
+  'weapon_raised', 'weapon_lowered', 'weapon_state', 'weapon_mode', 'weapon_type', 'weapon_equipped', 'weapon_held',
+  'weapon_slot', 'selected_weapon', 'item_selected', 'equip', 'equipped', 'unequip', 'holster', 'holstered', 'wield',
+  'throw', 'throwing', 'throw_charge', 'throw_ready', 'throw_state', 'throw_aim', 'grenade', 'grenade_aim', 'stratagem',
+  'prone', 'is_prone', 'crouch', 'crouching', 'is_crouching', 'stance', 'posture', 'move_speed', 'speed', 'moving',
+  'sprint', 'sprinting', 'in_vehicle', 'vehicle', 'seated', 'sitting', 'seat', 'driver', 'passenger', 'mounted',
+  'driving', 'on_ground', 'falling', 'reload', 'reloading', 'firing', 'fire', 'recoil', 'lean', 'turn', 'turn_speed' }
+local anim_found, det_said, det_next = nil, nil, 0
+local function log_det(c)
+  if now() < det_next then return end
+  det_next = now() + 0.1
+  local u = me_unit
+  if not (u and chef.unit_alive(u)) then return end
+  if anim_found == nil and chef.call_kind('Unit.has_animation_state_machine', PLAYER, u) == true then
+    anim_found = {}
+    local names = {}
+    for _, name in ipairs(ANIM_NAMES) do
+      if chef.call_kind('Unit.animation_has_variable', PLAYER, u, name) == true then
+        local i = chef.call_kind('Unit.animation_find_variable', PLAYER, u, name)
+        if type(i) == 'number' then anim_found[#anim_found + 1] = { name, i }; names[#names + 1] = name .. '#' .. i end
+      end
+    end
+    log('animation variables found: %s', #names > 0 and table.concat(names, ' ') or 'none of the names')
+  end
+  local grip = hand_pose()
+  if grip ~= C4_GRIP and chef.mouse_down('right') ~= true then det_said = nil return end
+  local d, ahead, side, high = det_in_hand(c)
+  local vals = {}
+  for _, f in ipairs(anim_found or {}) do
+    local v = chef.call_kind('Unit.animation_get_variable', PLAYER, u, f[2])
+    vals[#vals + 1] = f[1] .. '=' .. (type(v) == 'number' and string.format('%.2f', v) or tostring(v))
+  end
+  local text = string.format('pose %s, right %s, arc %s; %s', tostring(grip), tostring(chef.mouse_down('right') == true),
+                             tostring(c4_aim), table.concat(vals, ' '))
+  local place = d and string.format('%.2f ahead %.2f right %.2f up (%.2f across)', ahead, side, high,
+                                    math.sqrt(ahead * ahead + side * side)) or 'not in hand'
+  local said = det_said
+  if not said or said.text ~= text or said.place ~= place then
+    det_said = { text = text, place = place }
+    log('detonator %s; feet %.2f under the camera; %s', place, feet_z and c.z - feet_z or -1, text)
+  end
+end
+
 local function log_c4_object()
   local text = tostring(c4_obj.goid)
   if text ~= said_c4 then said_c4 = text; log('c4 object read: %s (mode %s)', text, tostring(icon_mode)) end
@@ -641,6 +694,7 @@ function M.update(dt)
   read_c4(c)
   c4_icon(c)
   log_c4_object()
+  log_det(c)
   if aiming or c4_aim then
     update_feet(c)
     draw_arc(c)
