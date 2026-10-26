@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.1-test.7'
+local VERSION = '1.0.1-test.8'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -626,20 +626,45 @@ local VEHICLE_NEAR, VEHICLE_SEAT, VEHICLE_UP = 1.2, 4.5, 0.35
 local vehicle_watch = chef.watch and chef.watch(VEHICLES, 0.5)
 local on_vehicle = nil           -- test builds: function(across, up) for the nearest vehicle within 5 m
 
+local seat_of = nil               -- the vehicle I sit in (after in_vehicle())
+
 in_vehicle = function()
+  seat_of = nil
   if not (vehicle_watch and me) then return false end
-  local best, bup
+  local best, bup, bu
   for _, it in ipairs(vehicle_watch.items) do
     if chef.unit_alive(it.unit) then
       local x, y, z = chef.unit_position(it.unit)
       if x then
         local across = math.sqrt((x - me[1]) ^ 2 + (y - me[2]) ^ 2)
-        if not best or across < best then best, bup = across, me[3] - z end
+        if not best or across < best then best, bup, bu = across, me[3] - z, it.unit end
       end
     end
   end
   if best and best < 6 and on_vehicle then on_vehicle(best, bup) end
-  return best ~= nil and (best < VEHICLE_NEAR or (best < VEHICLE_SEAT and bup >= VEHICLE_UP))
+  local seated = best ~= nil and (best < VEHICLE_NEAR or (best < VEHICLE_SEAT and bup >= VEHICLE_UP))
+  if seated then seat_of = bu end
+  return seated
+end
+
+-- The driver's seat: the icon is left out there only (1.0.1-test.7 left it out in every seat). Told by the side I sit on
+-- of the vehicle: DRIVER_SIDE m or more to its left (my place from its middle along its heading, chef.unit_rotation),
+-- the left being a guess to be checked (an FRV's driver sat 0.7 m off its middle, its passenger 0.4 m, test.2-5). Its
+-- heading not readable: every seat, as before.
+local DRIVER_SIDE = 0.15
+local on_seat = nil              -- test builds: function(ahead, right, up) of my place in the vehicle
+
+local function in_driver_seat()
+  if not (in_vehicle() and seat_of) then return false end
+  local fx, fy = chef.unit_rotation(seat_of)
+  local x, y, z = chef.unit_position(seat_of)
+  local h = fx and math.sqrt(fx * fx + fy * fy) or 0
+  if not x or h < 1e-6 then return true end
+  fx, fy = fx / h, fy / h
+  local dx, dy = me[1] - x, me[2] - y
+  local right = dx * fy - dy * fx
+  if on_seat then on_seat(dx * fx + dy * fy, right, me[3] - z) end
+  return right <= -DRIVER_SIDE
 end
 
 local function draw_icon(mode)
@@ -692,7 +717,7 @@ local function c4_icon(c)
   if now() >= icon_next then
     icon_next = now() + 0.1
     update_feet(c)
-    icon_mode = hand_pose() == C4_GRIP and not in_vehicle() and c4_mode(true) or nil
+    icon_mode = hand_pose() == C4_GRIP and not in_driver_seat() and c4_mode(true) or nil
   end
   if icon_mode then draw_icon(icon_mode) end
 end
@@ -704,6 +729,11 @@ local said_vehicle, said_c4 = nil, nil
 on_vehicle = function(across, up)
   local text = string.format('%.1f m across, %.1f m up', across, up)
   if text ~= said_vehicle then said_vehicle = text; log('nearest vehicle: %s', text) end
+end
+local said_seat = nil
+on_seat = function(ahead, right, up)
+  local text = string.format('%.1f ahead, %.1f right, %.1f up', ahead, right, up)
+  if text ~= said_seat then said_seat = text; log('seat in the vehicle: %s (driver: %s)', text, tostring(right <= -DRIVER_SIDE)) end
 end
 -- While C4 is in my hand or right is held: where the detonator is from my feet, the hand pose and the arc, every 0.1 s
 -- when something changed (1.0.1-test.2 also looked for an aim value among the animation variables: of some 90 likely
