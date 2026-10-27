@@ -229,16 +229,27 @@ class ArcTest(unittest.TestCase):
         self.assertEqual(ends(before)[16:26], ends(after)[16:26])
         self.assertEqual(len(before), len(after))
 
-    def test_the_arc_goes_when_the_aim_ends(self):
+    def test_the_arc_stays_until_the_ball_leaves_the_hand(self):
         self.aim()
-        self.fake["mouse"]["left"] = False
+        self.fake["mouse"]["left"] = False          # let go: the swing, the ball still in hand
+        self.frames(5)
+        self.assertGreater(len(self.lines()), 20, "kept while the ball is in hand")
+        self.lua.eval("function(b) b.x = b.x + 2 end")(self.ball)   # it flies
         self.frames(1)
         self.assertEqual([l[2] for l in self.lines()], [-10000], "one empty line resets the line object")
         self.frames(1)
         self.assertEqual(self.lines(), [])
 
+    def test_the_hold_ends_by_itself(self):
+        self.aim()
+        self.fake["mouse"]["left"] = False          # let go, and nothing ever leaves the hand
+        self.frames(30)
+        self.assertGreater(len(self.lines()), 20)
+        self.frames(10)                             # 0.6 s
+        self.assertEqual(self.lines(), [])
+
     def test_right_mouse_aims_a_stratagem(self):
-        self.ready_ball()
+        ball = self.ready_ball()
         self.fake["mouse"]["right"] = True
         self.frames(2)
         self.assertGreater(len(self.lines()), 20)
@@ -251,6 +262,8 @@ class ArcTest(unittest.TestCase):
         self.fake["mouse"]["left"] = True           # thrown with left while right aims
         self.frames(2)
         self.fake["mouse"]["left"] = False
+        self.frames(1)                              # let go, still in hand
+        self.lua.eval("function(b) b.x = b.x + 2 end")(ball)   # then it flies
         self.frames(2)
         self.assertEqual(self.lines(), [])
 
@@ -309,7 +322,10 @@ class ArcTest(unittest.TestCase):
         self.assertAlmostEqual(first[0], 0.42, delta=0.02)
         self.assertAlmostEqual(first[1], -0.4, delta=0.02)
         # left throws it: the arc goes at once
-        self.fake["mouse"]["left"] = True
+        self.fake["mouse"]["left"] = True           # thrown: kept until the charge shows up
+        self.frames(3)
+        self.assertGreater(len(self.lines()), 20)
+        self.add_unit("9b75217d8312dd67", -0.05, -0.4, 1.6)
         self.frames(1)
         self.assertEqual([l[2] for l in self.lines()], [-10000])
         self.frames(1)
@@ -384,9 +400,10 @@ class ArcTest(unittest.TestCase):
         self.assertGreater(len(lines), 20)
         self.assertAlmostEqual((lines[0][0] + lines[1][0]) / 2, 0.42, delta=0.02)   # from the detonator
         self.assertAlmostEqual((lines[0][2] + lines[1][2]) / 2, 2.05, delta=0.02)   # 1 m above it
-        # thrown: no arc for 0.8 s while the arm swings, then again
+        # thrown: the charge leaves, then no arc for 0.8 s while the arm swings, then again
         self.fake["mouse"]["left"] = True
         self.frames(2)
+        self.add_unit("9b75217d8312dd67", 0.42, -0.4, 1.3)
         self.fake["mouse"]["left"] = False
         self.frames(20)
         self.assertEqual(self.lines(), [])
@@ -684,6 +701,24 @@ class ArcTest(unittest.TestCase):
         self.lua.eval("function(u) u.x = 0.2 end")(det)
         self.frames(5)
         self.assertEqual(self.lines(), [])
+
+    def test_a_moving_throw_is_measured(self):
+        # test builds: running 3 m/s forward, the ball thrown (the fake flies it from 0.1 s on, 22 m/s at 19 degrees)
+        self.aim(10)
+        self.lua.eval("function(f) f.run = 3 end")(self.fake)
+        for _ in range(10):
+            self.lua.eval("function(f) f.me.x = f.me.x + 3 / 60 end")(self.fake)
+            self.frames(1)
+        self.fake["mouse"]["left"] = False
+        self.fake.throw("16f397ca5f51f271", 22, 19, 9.81, self.ball)
+        self.frames(200)
+        m = re.search(r"throw \(stratagem\): moving ([-\d.]+) fwd ([-\d.]+) right .*flew ([-\d.]+) fwd ([-\d.]+) right "
+                      r"([-\d.]+) up \(gravity ([-\d.]+)", self.logs())
+        self.assertTrue(m, self.logs())
+        self.assertAlmostEqual(float(m.group(1)), 3, delta=0.2)
+        self.assertAlmostEqual(float(m.group(3)), 22 * math.cos(math.radians(19)), delta=0.3)
+        self.assertAlmostEqual(float(m.group(6)), 9.81, delta=0.3)
+        self.assertRegex(self.logs(), r"held the arc 0\.\d\d s")
 
     def test_shooting_draws_nothing(self):
         self.fake["mouse"]["left"] = True                # no ball in hand: a shot

@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.2'
+local VERSION = '1.0.3-test.1'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -255,6 +255,24 @@ end
 
 local was_hold = false
 
+-- After the throw is let go (left released with a ball, left pressed with C4 aimed) the arc stays up until it leaves my
+-- hand (1.0.3; the swing takes a moment): it keeps following the camera, from where the hand was then, kept by my feet.
+-- It ends when the ball is HOLD_GONE m or more from there, or a C4 charge shows up within HOLD_GONE m of it, or after
+-- HOLD_MOST s.
+local HOLD_MOST, HOLD_GONE = 0.6, 1.5
+local hold = nil                 -- { c4, unit, off = { from my feet }, at, pos }
+local on_hold = nil              -- test builds: function(c, hold, what) at 'start' and 'end'
+local on_frame = nil             -- test builds: function(c) each frame
+
+local function start_hold(c, unit, c4)
+  local x, y, z
+  if unit and chef.unit_alive(unit) then x, y, z = chef.unit_position(unit) end
+  if not x then hold = nil return end
+  hold = { c4 = c4, unit = unit, at = now(), pos = { x, y, z },
+           off = me and { x - me[1], y - me[2], z - me[3] } or nil }
+  if on_hold then on_hold(c, hold, 'start') end
+end
+
 local function read_input(c)
   local t = now()
   local left = chef.mouse_down('left') == true
@@ -266,6 +284,7 @@ local function read_input(c)
   end
   local held = false
   if was_left and not left and aiming then
+    start_hold(c, ball, false)
     ball, ready_ball, looking = nil, nil, false   -- thrown
   elseif hold then
     if aiming then
@@ -494,7 +513,10 @@ local function read_c4(c)
       if ready then c4_ready_at = now() end
       if c4_posed and not ready and grip == C4_GRIP and now() - c4_ready_at < C4_GRACE then ready = true end
     end
-    if c4_aim and left then c4_rearm = now() + C4_REARM end
+    if c4_aim and left then
+      c4_rearm = now() + C4_REARM
+      start_hold(c, c4_det, true)
+    end
     posed = ready == true and not left and now() >= c4_rearm
     held = posed and c4_mode(not c4_posed) ~= 'detonate'
     if held and not c4_aim then find_armour() end
@@ -517,25 +539,41 @@ local render_scale, scale_next = 1, 0
 -- the arc is dashed by flight time: DASH segments drawn, GAP left out (about 1.3 m and 0.7 m). test.10-11 measured
 -- dashes in px from the camera, so they slid along the arc whenever the camera moved: it rippled as you turned
 local DASH, GAP = 2, 1
--- the throw's path, from where the ball or charge is let go, until DEEPEST under my feet or MOST_T: a list of points
-local function path(c)
+-- where a throw is let go: above the ball (or the C4) in my hand, standing, crouched or prone alike (during the hold,
+-- where it was then, from my feet); else right of my chest, or under the camera
+local function release_point(c, held, c4, from_feet)
+  local ox, oy, oz
+  if from_feet and me then
+    ox, oy, oz = me[1] + from_feet[1], me[2] + from_feet[2], me[3] + from_feet[3]
+  elseif held and chef.unit_alive(held) then
+    ox, oy, oz = chef.unit_position(held)
+  end
+  if not ox then
+    local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
+    local hx, hy = 0, 1
+    if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
+    if me then
+      ox, oy, oz = me[1] + hy * 0.3 + hx * 0.3, me[2] - hx * 0.3 + hy * 0.3, me[3] + 1.35
+    else
+      ox, oy, oz = c.x + hy * 0.3 + hx * 1.5, c.y - hx * 0.3 + hy * 1.5, c.z - 0.6
+    end
+  end
+  return ox, oy, oz + (c4 and C4_RELEASE_UP or RELEASE_UP)
+end
+
+-- the throw's velocity as drawn: x, y, z
+local function throw_velocity(c, c4)
   local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
-  local pitch = camera_pitch(c) + (c4_aim and C4_LIFT or LIFT)
+  local pitch = camera_pitch(c) + (c4 and C4_LIFT or LIFT)
   local hx, hy = 0, 1
   if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
-  local speed = (c4_aim and C4_SPEED or SPEED) * speed_up(c4_aim)
-  local vx, vy, vz = hx * speed * math.cos(pitch), hy * speed * math.cos(pitch), speed * math.sin(pitch)
-  -- where it is let go: above the ball (or the C4) in my hand, standing, crouched or prone alike; else right of my
-  -- chest, or under the camera
-  local ox, oy, oz
-  local held = c4_aim and c4_det or ball
-  if held and chef.unit_alive(held) then ox, oy, oz = chef.unit_position(held) end
-  if not ox and me then
-    ox, oy, oz = me[1] + hy * 0.3 + hx * 0.3, me[2] - hx * 0.3 + hy * 0.3, me[3] + 1.35
-  elseif not ox then
-    ox, oy, oz = c.x + hy * 0.3 + hx * 1.5, c.y - hx * 0.3 + hy * 1.5, c.z - 0.6
-  end
-  oz = oz + (c4_aim and C4_RELEASE_UP or RELEASE_UP)
+  local speed = (c4 and C4_SPEED or SPEED) * speed_up(c4)
+  return hx * speed * math.cos(pitch), hy * speed * math.cos(pitch), speed * math.sin(pitch)
+end
+
+-- the throw's path, from where the ball or charge is let go, until DEEPEST under my feet or MOST_T: a list of points
+local function path(c, c4, ox, oy, oz)
+  local vx, vy, vz = throw_velocity(c, c4)
   local deepest = (feet_z or (c.z - 2)) - DEEPEST
   local function at(t)
     return ox + vx * t, oy + vy * t, oz + vz * t - 0.5 * GRAVITY * t * t
@@ -576,7 +614,7 @@ local drew = false
 
 local NATIVE = { -(WIDTH - 1) / 2, (WIDTH - 1) / 2 }   -- px off the arc's middle, 2 lines
 
-local function draw_arc(c)
+local function draw_arc(c, c4, ox, oy, oz)
   local _, sh = chef.screen()
   if now() >= scale_next and chef.setting then
     scale_next = now() + SCALE_EVERY
@@ -587,7 +625,7 @@ local function draw_arc(c)
   local px_angle = (tonumber(c.fov) or 0.96) / math.max(1, sh or 1080)
   local offsets = NATIVE
   if render_scale < 0.95 then offsets = { -1 / render_scale, 0, 1 / render_scale } end
-  world_strip(c, path(c), chef.color(COLOR[1], COLOR[2], COLOR[3], 255), px_angle, offsets)
+  world_strip(c, path(c, c4, ox, oy, oz), chef.color(COLOR[1], COLOR[2], COLOR[3], 255), px_angle, offsets)
   drew = true
 end
 
@@ -704,6 +742,132 @@ local function c4_icon(c)
   if icon_mode then draw_icon(icon_mode) end
 end
 
+-- ------------------------------------------------------------------ the hold's end
+local C4_CHARGE = '9b75217d8312dd67'
+local charge_watch = chef.watch and chef.watch({ [C4_CHARGE] = true }, 0.5)
+
+-- the hold, or nil once the throw has left my hand (a C4 charge's list is asked for afresh each frame of it: a charge
+-- is no unit until it flies)
+local function follow_hold(c)
+  if not hold then return nil end
+  local h = hold
+  local hx, hy, hz = h.pos[1], h.pos[2], h.pos[3]
+  if h.off and me then hx, hy, hz = me[1] + h.off[1], me[2] + h.off[2], me[3] + h.off[3] end
+  local gone, flying = now() - h.at > HOLD_MOST, nil
+  if not gone and h.c4 then
+    if charge_watch then
+      charge_watch.refresh()
+      for _, it in ipairs(charge_watch.items) do
+        if chef.unit_alive(it.unit) then
+          local x, y, z = chef.unit_position(it.unit)
+          if x and (x - hx) ^ 2 + (y - hy) ^ 2 + (z - hz) ^ 2 < HOLD_GONE * HOLD_GONE then gone, flying = true, it.unit end
+        end
+      end
+    end
+  elseif not gone then
+    local x, y, z
+    if chef.unit_alive(h.unit) then x, y, z = chef.unit_position(h.unit) end
+    if not x or (x - hx) ^ 2 + (y - hy) ^ 2 + (z - hz) ^ 2 >= HOLD_GONE * HOLD_GONE then gone, flying = true, h.unit end
+  end
+  if gone then
+    if on_hold then on_hold(c, h, 'end', flying) end
+    hold = nil
+    return nil
+  end
+  return h
+end
+
+-- ------------------------------------------------------------------ test builds only: moving throws
+-- Does the game add my running speed to a throw? At each throw: my velocity then (from my feet over the last
+-- MOVE_OVER s), the throw's real velocity (fitted on its flight from the release on: when the hold ends), and the drawn
+-- one, all as forward / right as the camera looked and up; and how long the hold lasted. Logged per throw.
+local MOVE_OVER = 0.15
+local trail = {}                 -- my feet: { t, x, y, z }, the last MOVE_OVER s and a bit
+local measuring = nil            -- { c4, cam, pitch, move, drawn, start, release, unit, samples }
+
+on_frame = function(c)
+  local t = now()
+  if me then
+    trail[#trail + 1] = { t, me[1], me[2], me[3] }
+    while #trail > 2 and t - trail[2][1] >= MOVE_OVER do table.remove(trail, 1) end
+  end
+  local m = measuring
+  if not (m and m.unit) then return end
+  if not chef.unit_alive(m.unit) or t - m.release > 2.5 then
+    measuring = nil
+    local s, ls = {}, nil              -- from 0.1 s after the release until it hits something (its speed halves)
+    for i, p in ipairs(m.samples) do
+      local q = m.samples[i - 1]
+      if p[1] - m.release >= 0.1 then
+        if q and p[1] > q[1] then
+          local sp = math.sqrt((p[2] - q[2]) ^ 2 + (p[3] - q[3]) ^ 2 + (p[4] - q[4]) ^ 2) / (p[1] - q[1])
+          if ls and sp < ls * 0.5 then break end
+          ls = sp
+        end
+        s[#s + 1] = p
+      end
+    end
+    if #s < 4 then log('throw (%s): too few samples (%d)', m.c4 and 'c4' or 'stratagem', #s) return end
+    -- x, y as lines and z as a parabola in t (from the release): least squares
+    local S, Sx, Sy, Sz = { 0, 0, 0, 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0, 0 }
+    for _, p in ipairs(s) do
+      local u = p[1] - m.release
+      for k = 0, 4 do S[k + 1] = S[k + 1] + u ^ k end
+      for k = 0, 2 do Sz[k + 1] = Sz[k + 1] + p[4] * u ^ k end
+      for k = 0, 1 do Sx[k + 1] = Sx[k + 1] + p[2] * u ^ k; Sy[k + 1] = Sy[k + 1] + p[3] * u ^ k end
+    end
+    local d2 = S[1] * S[3] - S[2] * S[2]
+    local vx, vy = (S[1] * Sx[2] - S[2] * Sx[1]) / d2, (S[1] * Sy[2] - S[2] * Sy[1]) / d2
+    local A = { { S[1], S[2], S[3], Sz[1] }, { S[2], S[3], S[4], Sz[2] }, { S[3], S[4], S[5], Sz[3] } }
+    for i = 1, 3 do
+      for j = i + 1, 3 do
+        local f = A[j][i] / A[i][i]
+        for k = i, 4 do A[j][k] = A[j][k] - f * A[i][k] end
+      end
+    end
+    local z = {}
+    for i = 3, 1, -1 do
+      local v = A[i][4]
+      for k = i + 1, 3 do v = v - A[i][k] * z[k] end
+      z[i] = v / A[i][i]
+    end
+    local fx, fy = m.cam[1], m.cam[2]
+    local function parts(x, y) return x * fx + y * fy, x * fy - y * fx end
+    local flf, flr = parts(vx, vy)
+    local drf, drr = parts(m.drawn[1], m.drawn[2])
+    local mvf, mvr = parts(m.move[1], m.move[2])
+    log('throw (%s): moving %.1f fwd %.1f right %.1f up m/s; flew %.1f fwd %.1f right %.1f up (gravity %.2f, %d samples); '
+        .. 'drawn %.1f fwd %.1f right %.1f up; off by %.1f fwd %.1f right %.1f up; camera %.1f deg; held the arc %.2f s',
+        m.c4 and 'c4' or 'stratagem', mvf, mvr, m.move[3], flf, flr, z[2], -2 * z[3], #s, drf, drr, m.drawn[3],
+        flf - drf, flr - drr, z[2] - m.drawn[3], math.deg(m.pitch), m.release - m.start)
+    return
+  end
+  local x, y, z = chef.unit_position(m.unit)
+  if x then m.samples[#m.samples + 1] = { t, x, y, z } end
+end
+
+on_hold = function(c, h, what, flying)
+  if what == 'start' then
+    local move = { 0, 0, 0 }
+    local a, b = trail[1], trail[#trail]
+    if a and b and b[1] - a[1] > 0.02 then
+      local dt = b[1] - a[1]
+      move = { (b[2] - a[2]) / dt, (b[3] - a[3]) / dt, (b[4] - a[4]) / dt }
+    end
+    local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
+    local vx, vy, vz = throw_velocity(c, h.c4)
+    measuring = { c4 = h.c4, cam = { c.fx / fh, c.fy / fh }, pitch = camera_pitch(c), move = move,
+                  drawn = { vx, vy, vz }, start = now(), samples = {} }
+  elseif measuring and not measuring.unit then
+    if flying then
+      measuring.unit, measuring.release = flying, now()
+    else
+      log('throw (%s): nothing seen leaving the hand in %.1f s', h.c4 and 'c4' or 'stratagem', HOLD_MOST)
+      measuring = nil
+    end
+  end
+end
+
 -- ------------------------------------------------------------------ the frame
 local said_world = nil
 
@@ -717,14 +881,20 @@ function M.update(dt)
   if said_world ~= chef.world_id() then
     said_world = chef.world_id()
     ball, aiming, looking = nil, false, false
-    c4_aim, c4_posed, c4_det = false, false, nil
+    c4_aim, c4_posed, c4_det, hold = false, false, nil, nil
   end
   read_input(c)
   read_c4(c)
   c4_icon(c)
-  if aiming or c4_aim then
-    update_feet(c)
-    draw_arc(c)
+  update_feet(c)
+  local h = follow_hold(c)
+  if on_frame then on_frame(c) end
+  if aiming then
+    draw_arc(c, false, release_point(c, ball, false))
+  elseif c4_aim then
+    draw_arc(c, true, release_point(c, c4_det, true))
+  elseif h then
+    draw_arc(c, h.c4, release_point(c, h.unit, h.c4, h.off))
   else
     clear_arc()
   end
@@ -734,6 +904,7 @@ function M.shutdown()
   if players then players.stop() end
   if det_watch then det_watch.stop() end
   if vehicle_watch then vehicle_watch.stop() end
+  if charge_watch then charge_watch.stop() end
   if ball_watch then ball_watch.stop() end
 end
 
