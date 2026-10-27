@@ -26,6 +26,11 @@ fake.units = { fake.me, fake.mine, fake.runtime }
 
 local E = {
   ['World.units'] = function() local out = {}; for i, u in ipairs(fake.units) do out[i] = u end; return out end,
+  -- every type declares the fields the mod reads (C4's options, owner and carry, a fire mode, the player's avatar)
+  ['Network.object_info'] = function(t)
+    return { fields = { { id = '31f86165' }, { id = '3ccffa7f' }, { id = '788b9753' }, { id = '49c250a6' },
+                        { id = '0f27c68e' } } }
+  end,
 }
 fake.E = E
 local function call(name, ...)
@@ -378,7 +383,10 @@ class ArcTest(unittest.TestCase):
             if g == 7 and name == 'xx1' then return 3 end
             error('NATIVE CRASH: an undeclared field')
           end
-          f.E['Network.object_info'] = function(t) return { fields = { { id = 'a1', name = 'du7kbt' }, { id = 'b2', name = 'xx1' } } } end
+          f.E['Network.object_info'] = function(t)
+            if t == 'un6y1d' then return { fields = { { id = '0f27c68e' } } } end
+            return { fields = { { id = 'a1', name = 'du7kbt' }, { id = 'b2', name = 'xx1' } } }
+          end
           f.nades = 4
         end""")(self.fake)
         self.fake["down"]["4"] = True
@@ -486,7 +494,7 @@ class ArcTest(unittest.TestCase):
           f.E['GameSession.game_object_exists'] = function(gs, id) return true end
           f.E['GameSession.game_object_is_type'] = function(gs, id, t) return t == 'kbv6zx' and id == (by_host and 9 or 7) end
           f.E['GameSession.game_object_field'] = function(gs, id, name)
-            if name == 'ozvglfc' then return f.c4_options end
+            if name == 'ozvglfc' then f.options_read = true; return f.c4_options end
             if name == 'g5g7b9d' then return 'AB12' end
             if name == 'n5jmvf' then return f.c4_carry or 0 end
           end
@@ -587,6 +595,31 @@ class ArcTest(unittest.TestCase):
         self.fake.changes["c4_icon"](False)         # turned off in the menu
         self.frames(10)
         self.assertEqual(self.shapes(), [])
+
+    def test_a_field_the_game_no_longer_declares_is_not_read(self):
+        # a patch moved C4's options field: never read (reading it could end the game), no icon
+        self.lua.eval("""function(f)
+          f.E['Network.object_info'] = function(t)
+            return { fields = { { id = '3ccffa7f' }, { id = '788b9753' } } }
+          end
+        end""")(self.fake)
+        self.c4_in_hand()
+        self.hand_pose(42)
+        self.c4_object(80)
+        self.frames(10)
+        self.assertEqual(self.shapes(), [])
+        self.assertIn("network: type kbv6zx no longer declares field ozvglfc (a game patch?): not read", self.logs())
+        read = self.lua.eval("function(f) return f.options_read end")(self.fake)
+        self.assertFalse(read, "the options field was read")
+
+    def test_no_field_info_reads_nothing(self):
+        self.lua.eval("function(f) f.E['Network.object_info'] = nil end")(self.fake)
+        self.c4_in_hand()
+        self.hand_pose(42)
+        self.c4_object(80)
+        self.frames(10)
+        self.assertEqual(self.shapes(), [])
+        self.assertIn("network: no field info for type kbv6zx: its fields are not read", self.logs())
 
     def test_c4_mode_icon_off_from_the_start(self):
         self.fake.opts["c4_icon"] = False

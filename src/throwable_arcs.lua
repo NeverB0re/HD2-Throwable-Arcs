@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.8'
+local VERSION = '1.1.0-test.9'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -442,6 +442,44 @@ local C4_TYPE, C4_OPTIONS, C4_OWNER, C4_CARRY = 'kbv6zx', 'ozvglfc', 'g5g7b9d', 
 local C4_SCAN = 2
 local c4_obj = { goid = nil, world = nil, next = 0 }
 
+-- 1.1.0: a network field is read only when the game declares it for that type now (Network.object_info, as NarrowHUD
+-- checks on a game version it wasn't made for): the names above are from one game build's network config, and reading
+-- a field a type doesn't declare can end the game, so a patch that moved one turned C4's icon off instead. Field ids
+-- (the 32-bit hashes the info lists, lower-case hex without leading zeros) from NarrowHUD's data. Info not given (a
+-- Chef that refuses it): nothing is read.
+-- (in a function of its own: the file is near Lua 5.1's 200 locals)
+local read_field = (function()
+local FIELD_ID = { [C4_OPTIONS] = '31f86165', [C4_OWNER] = '3ccffa7f', [C4_CARRY] = '788b9753', if5_pz = '49c250a6',
+                   u4d1h9a = 'f27c68e' }
+local declared = {}              -- type name -> { [field id] = true }, or false when the info isn't given
+return function(gs, goid, type_name, field, tag)
+  local set = declared[type_name]
+  if set == nil then
+    local ok, info = pcall(chef.call_kind, 'Network.object_info', 'objinfo ' .. type_name, type_name)
+    set = false
+    if ok and type(info) == 'table' and type(info.fields) == 'table' then
+      set = {}
+      for _, f in ipairs(info.fields) do
+        local id = type(f) == 'table' and f.id
+        if type(id) == 'number' then id = string.format('%x', id) end
+        if type(id) == 'string' then set[(string.gsub(string.lower(id), '^0+', ''))] = true end
+      end
+    end
+    declared[type_name] = set
+    if not set then log('network: no field info for type %s: its fields are not read', type_name) end
+  end
+  if not set then return nil end
+  if not set[FIELD_ID[field]] then
+    if set[field] ~= 'said' then
+      set[field] = 'said'
+      log('network: type %s no longer declares field %s (a game patch?): not read', type_name, field)
+    end
+    return nil
+  end
+  return chef.call_kind('GameSession.game_object_field', tag, gs, goid, field)
+end
+end)()
+
 local function peer_text(v)
   if type(v) == 'string' then return (string.gsub(string.lower(v), '^0+', '')) end
   return nil
@@ -454,7 +492,7 @@ end
 
 -- (a C4 that I carry: one that is still there and is C4 first)
 local function carried(gs, goid)
-  local v = chef.call_kind('GameSession.game_object_field', 'c4 carry', gs, goid, C4_CARRY)
+  local v = read_field(gs, goid, C4_TYPE, C4_CARRY, 'c4 carry')
   return type(v) == 'number' and v % 4 == 0
 end
 
@@ -467,7 +505,7 @@ local function find_c4_object(gs, peer)
   local theirs = chef.call_kind('GameSession.objects_owned_by', 'c4 owned', gs, host)
   for _, goid in pairs(type(theirs) == 'table' and theirs or {}) do
     if is_c4(gs, goid) and carried(gs, goid)
-       and peer_text(chef.call_kind('GameSession.game_object_field', 'c4 owner', gs, goid, C4_OWNER)) == peer_text(peer) then
+       and peer_text(read_field(gs, goid, C4_TYPE, C4_OWNER, 'c4 owner')) == peer_text(peer) then
       return goid
     end
   end
@@ -488,7 +526,7 @@ local function c4_mode(look)
     c4_obj.goid = find_c4_object(gs, peer)
     if not c4_obj.goid then return nil end
   end
-  local v = tonumber(chef.call_kind('GameSession.game_object_field', 'c4 options', gs, c4_obj.goid, C4_OPTIONS))
+  local v = tonumber(read_field(gs, c4_obj.goid, C4_TYPE, C4_OPTIONS, 'c4 options'))
   if not v then return nil end
   local m = math.floor(v / 256) % 4
   return (m == 0 and 'deploy') or (m == 1 and 'detonate') or nil, v
@@ -932,7 +970,7 @@ local underbarrel_on = (function()
     for g, name in pairs(weapons) do
       if call('GameSession.game_object_exists', 'exists', gs, g) == true
          and call('GameSession.game_object_is_type', 'type', gs, g, name) == true then
-        local fm = call('GameSession.game_object_field', 'fire mode', gs, g, FIRE_MODE)
+        local fm = read_field(gs, g, name, FIRE_MODE, 'ub fire mode')
         if said[g] ~= fm then
           said[g] = fm
           log('one-two: object %s (type %s) fire mode %s', tostring(g), name, tostring(fm))
@@ -1075,7 +1113,7 @@ local function my_avatar(gs)
   for _, goid in pairs(mine) do
     if chef.call_kind('GameSession.game_object_exists', 'lab exists', gs, goid) == true
        and chef.call_kind('GameSession.game_object_is_type', 'lab player', gs, goid, PLAYER_TYPE) == true then
-      local a = chef.call_kind('GameSession.game_object_field', 'lab avatar', gs, goid, PLAYER_AVATAR)
+      local a = read_field(gs, goid, PLAYER_TYPE, PLAYER_AVATAR, 'lab avatar')
       if type(a) == 'number' and a ~= NO_OBJECT
          and chef.call_kind('GameSession.game_object_exists', 'lab exists', gs, a) == true
          and chef.call_kind('GameSession.game_object_is_type', 'lab avatar type', gs, a, AVATAR_TYPE) == true then
