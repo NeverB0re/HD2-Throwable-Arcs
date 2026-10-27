@@ -21,10 +21,16 @@ sideways), and the arc with it.
 **Render Scale below native:** with the game's Anti-Aliasing off, the game clips 3D drawing to a corner of the
 screen, and the arc with it. Turn Anti-Aliasing on (any quality) and the arc shows whole.
 
-**Thick air:** in a sandstorm or fog the far part of the arc can look faint blue: the game's fog on drawn lines, which
-a mod can't turn off.
+**Faint blue arc:** on some maps part of the arc can look faint blue. It seems to come from the map's effects (it isn't
+anti-aliasing), but the exact cause is unknown and it is hard to reproduce: if you find what causes it, please open an
+issue.
 
-Grenades aren't drawn: which grenade is in your hand can't be told before it is thrown.
+Grenades and guns aren't drawn. Grenades are held like stratagem balls and appear only once they leave the hand, so
+which one you hold can't be told before the throw; a gun's bullet speed and drop can't be read. Neither is possible for
+now; ways are still being looked for.
+
+Works with HD2 Transmog (the throw-range perk is read from the armour you really wear) and with mods that only change
+textures. Other mods that put another armour's model on you may hide the perk (the arc is then drawn without it).
 
 Requires **Chef Shared Loader** 1.2 or newer (Nexus 17760). The mod only reads the game and draws; it never changes
 anything in the game.
