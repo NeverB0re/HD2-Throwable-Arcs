@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.3-test.7'
+local VERSION = '1.0.3'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -191,20 +191,16 @@ end
 -- ball in hand for BALL_SCAN_FOR s; none, it is a shot.
 local BALL_SCAN_FOR = 1
 local ball_watch = chef.watch and chef.watch({ [STRATAGEM_BALL] = true }, 0.5)
-local balls, held_since = {}, 0
+local held_since = 0
 local was_left, aiming, ball = false, false, nil
 local looking = false
 
-local function scan_balls()
-  balls = {}
-  if not ball_watch then return end
-  for _, it in ipairs(ball_watch.items) do balls[#balls + 1] = it.unit end
-end
-
 -- the nearest stratagem ball in my hand, or nil
 local function ball_in_hand(c)
+  if not ball_watch then return nil end
   local best, bu
-  for _, u in ipairs(balls) do
+  for _, it in ipairs(ball_watch.items) do
+    local u = it.unit
     if chef.unit_alive(u) then
       local x, y, z = chef.unit_position(u)
       if x then
@@ -256,8 +252,6 @@ local function ball_ahead(c, u)
 end
 
 local function watch_pose(c)
-  scan_balls()
-  update_feet(c)
   local u = ball_in_hand(c)
   if u ~= pose.u then pose, ready_ball = { u = u, list = {} }, nil end
   if not u then return end
@@ -283,38 +277,33 @@ local was_hold = false
 -- every half second or so, too late to end the arc on.
 local HOLD_MOST, HOLD_GONE, C4_HOLD = 0.6, 1.5, 0.15
 local hold = nil                 -- { c4, unit, off = { from my feet }, at, pos }
-local on_hold = nil              -- test builds: function(c, hold, what) at 'start' and 'end'
-local on_frame = nil             -- test builds: function(c) each frame
 
-local function start_hold(c, unit, c4)
+local function start_hold(unit, c4)
   local x, y, z
   if unit and chef.unit_alive(unit) then x, y, z = chef.unit_position(unit) end
   if not x then hold = nil return end
   hold = { c4 = c4, unit = unit, at = now(), pos = { x, y, z },
            off = me and { x - me[1], y - me[2], z - me[3] } or nil }
-  if on_hold then on_hold(c, hold, 'start') end
 end
 
 local function read_input(c)
   local t = now()
   local left = chef.mouse_down('left') == true
-  local hold = left or chef.mouse_down('right') == true
+  local down = left or chef.mouse_down('right') == true
   if not left then watch_pose(c) end
-  if hold and not was_hold then
+  if down and not was_hold then
     held_since, looking = t, true
     if ball_watch then ball_watch.refresh() end
   end
   local held = false
   if was_left and not left and aiming then
-    start_hold(c, ball, false)
+    start_hold(ball, false)
     ball, ready_ball, looking = nil, nil, false   -- thrown
-  elseif hold then
+  elseif down then
     if aiming then
-      update_feet(c)
       held = still_in_hand(ball)
       if not held then ball, looking = nil, false end
     elseif pending then
-      update_feet(c)
       if not still_in_hand(pending) then
         pending, looking = nil, false        -- put away: a shot
       else
@@ -325,8 +314,6 @@ local function read_input(c)
         end
       end
     elseif looking then
-      scan_balls()
-      update_feet(c)
       local u = ball_in_hand(c)
       if u and u == ready_ball then
         ball, held = u, true
@@ -339,8 +326,8 @@ local function read_input(c)
       end
     end
   end
-  if not hold then pending = nil end
-  was_left, was_hold = left, hold
+  if not down then pending = nil end
+  was_left, was_hold = left, down
   aiming = held
 end
 
@@ -348,13 +335,14 @@ end
 -- C4 is aimed with right mouse (left alone throws it at once): right held with C4 in my hand is the aim; it ends at
 -- left (the throw) or when right is let go. Which weapon is in my hand: my helldiver's hand pose, the animation
 -- variable weapon_selected, as NarrowHUD (luka189, Nexus 17882) reads it: C4_GRIP for C4 (its learned table: 42).
--- Without that variable, the hand alone: the C4 in my hand is the detonator's unit (filediver: equipment/backpacks/
+-- Without that variable, no C4 arc (until 1.0.2 the detonator's place alone told it then; 1.0.3 after a report of an
+-- arc while aiming the Censor rifle). The aim pose is told by the detonator's unit (filediver: equipment/backpacks/
 -- c4_charge_backpack/c4_charge_detonator; its charge is no unit until it flies, and my helldiver's 1 mesh never
--- changes, test.24-25), held in my right hand (test.25, standing: about 0 ahead, 0.4 right, 1.05 up from my feet), and
--- right held it goes forward into the aim within 0.3 s, from about 0.40 m from my feet across to 0.53-0.55 m; C4_RIGHT
--- m or more to my right and not above C4_HIGH m (the throw raises it to 2.05-2.11 m). The aim pose is asked for with
--- the hand pose too (1.0.1): putting C4 away while aiming kept the pose a moment and drew the arc, and right in a
--- vehicle's driver seat (no aiming there) drew it as well. The aim pose: the detonator C4_PUSH m or more farther from
+-- changes, test.24-25), held in my right hand (test.25, standing: about 0 ahead, 0.4 right, 1.05 up from my feet):
+-- right held it goes forward into the aim within 0.3 s, from about 0.40 m from my feet across to 0.53-0.55 m, not above
+-- C4_HIGH m (the throw raises it to 2.05-2.11 m). The hand pose alone isn't the aim (1.0.1): putting C4 away while
+-- aiming kept the pose a moment and drew the arc, and right in a vehicle's driver seat (no aiming there) drew it as
+-- well. The aim pose: the detonator C4_PUSH m or more farther from
 -- my feet (across) than it was nearest since right went down; kept while it stays C4_KEEP m or more farther. Its
 -- distance, not how far ahead along the camera's heading (1.0.1-test.1): turning fast, my helldiver turns after the
 -- camera, and seated in a vehicle it faces the vehicle's way, and the arc came and went with the heading.
@@ -364,7 +352,7 @@ end
 -- at about 22.4 m/s, C4_LIFT above the camera's pitch: fitted on 5 measured throws (test.26-30), 0.1 m off along 1-40 m.
 local C4_DET = '51f50d6321f52f3d'
 local C4_SPEED, C4_LIFT, C4_RELEASE_UP = 22.4, math.rad(4.4), 1.0
-local C4_PUSH, C4_KEEP, C4_RIGHT, C4_HIGH = 0.1, 0.05, 0.15, 1.6
+local C4_PUSH, C4_KEEP, C4_HIGH = 0.1, 0.05, 1.6
 -- Leaning out of a vehicle's window to aim, the detonator gets 1.15-1.2 m from my feet across (1.0.1-test.2): its hand
 -- reaches C4_HAND m. Prone (0.06-0.46 m above my feet), crouched (0.56-0.69 m) and sliding on my knees (0.55-0.58 m)
 -- it is under C4_LOW_UP m and right moves it little or not at all (1.0.1-test.2-4; standing it is 0.82 m up or more):
@@ -397,7 +385,7 @@ local c4_posed = false           -- in C4's aim pose (DEPLOY or DETONATE alike; 
 -- it was dropped, and 1.0.0 kept reading it. The object is looked for when right goes down or for the icon (at most
 -- every C4_SCAN s while none is found) and kept while I carry it; before each read it must still exist and be that
 -- type (reading a gone object's field can end the game, NarrowHUD's notes). Not readable (a game patch, a Chef that
--- refuses the calls): the hand alone tells it, as before.
+-- refuses the calls): the arc shows in either mode, and no icon.
 local C4_TYPE, C4_OPTIONS, C4_OWNER, C4_CARRY = 'kbv6zx', 'ozvglfc', 'g5g7b9d', 'n5jmvf'
 local C4_SCAN = 2
 local c4_obj = { goid = nil, world = nil, next = 0 }
@@ -454,12 +442,10 @@ local function c4_mode(look)
   return (m == 0 and 'deploy') or (m == 1 and 'detonate') or nil, v
 end
 
--- the nearest detonator in my hand, and where it is from my feet (ahead and right as the camera looks), or nil
-local function det_in_hand(c)
-  local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
-  if not (det_watch and me) or fh < 1e-6 then return nil end
-  local hx, hy = c.fx / fh, c.fy / fh
-  local best, bu, ahead, side, high
+-- the nearest detonator in my hand, and how far it is from my feet across and above them, or nil
+local function det_in_hand()
+  if not (det_watch and me) then return nil end
+  local best, bu, high
   for _, it in ipairs(det_watch.items) do
     local u = it.unit
     if chef.unit_alive(u) then
@@ -468,12 +454,12 @@ local function det_in_hand(c)
         local dx, dy, up = x - me[1], y - me[2], z - me[3]
         local across = math.sqrt(dx * dx + dy * dy)
         if across <= C4_HAND and up >= HAND_LOW and up <= HAND_HIGH and (not best or across < best) then
-          best, bu, ahead, side, high = across, u, dx * hx + dy * hy, dx * hy - dy * hx, up
+          best, bu, high = across, u, up
         end
       end
     end
   end
-  return bu, ahead, side, high
+  return bu, best, high
 end
 
 -- my helldiver's hand pose (NarrowHUD's weapon_selected: 0 nothing in hand, 40 and 41 grenades and stratagem balls),
@@ -511,33 +497,28 @@ local function read_c4(c)
   local held, posed = false, false
   if not right and now() >= grip_next then
     grip_next = now() + 0.2
-    update_feet(c)
     hand_pose()
   end
   if right and not aiming and det_watch then
-    update_feet(c)
-    local u, ahead, side, high = det_in_hand(c)
+    local u, across, high = det_in_hand()
     local grip = hand_pose()
     if grip == DIVE_GRIP and u and (c4_posed or high < C4_PRONE_UP) and now() - c4_grip_at <= C4_DIVE then grip = C4_GRIP end
     local ready = false
-    if u and (grip == nil or grip == C4_GRIP) then
-      local across = math.sqrt(ahead * ahead + side * side)
+    if u and grip == C4_GRIP then
       c4_least, c4_low = math.min(c4_least or across, across), math.min(c4_low or high, high)
-      ready = (grip ~= nil or side >= C4_RIGHT) and high <= C4_HIGH
+      ready = high <= C4_HIGH
               and (across - c4_least >= (c4_posed and C4_KEEP or C4_PUSH) or high - c4_low >= C4_RAISE)
-      if grip == C4_GRIP then
-        if in_vehicle() then
-          if c4_posed then ready = true end
-        elseif high < C4_LOW_UP then
-          ready = true
-        end
+      if in_vehicle() then
+        if c4_posed then ready = true end
+      elseif high < C4_LOW_UP then
+        ready = true
       end
       if ready then c4_ready_at = now() end
-      if c4_posed and not ready and grip == C4_GRIP and now() - c4_ready_at < C4_GRACE then ready = true end
+      if c4_posed and not ready and now() - c4_ready_at < C4_GRACE then ready = true end
     end
     if c4_aim and left then
       c4_rearm = now() + C4_REARM
-      start_hold(c, c4_det, true)
+      start_hold(c4_det, true)
     end
     posed = ready == true and not left and now() >= c4_rearm
     held = posed and c4_mode(not c4_posed) ~= 'detonate'
@@ -551,10 +532,10 @@ end
 
 -- ------------------------------------------------------------------ drawing
 local COLOR = { 255, 255, 255 }
--- Parts of the arc came out faint blue now and then (1.0.1-test.3, 1.0.3-test.1): the game's temporal anti-aliasing /
--- upscaling blends a thin line (no motion of its own to follow) into what is around it, more so when it is two lines
--- with a gap. The arc is 3 lines a render pixel apart, 3 render pixels wide, at any render scale. The render scale: the game's settings file's
--- render resolution over the screen's height, read every SCALE_EVERY s.
+-- The arc is 3 lines a render pixel apart, 3 render pixels wide, at any render scale. The render scale: the game's
+-- settings file's render resolution over the screen's height, read every SCALE_EVERY s. Its far part can come out
+-- faint blue in thick air (a sandstorm, 1.0.3-test.3; at native scale and with anti-aliasing off alike): the game's
+-- fog on its lines, which a mod's line can't turn off.
 local SCALE_EVERY = 2
 local render_scale, scale_next = 1, 0
 -- the arc is dashed by flight time: DASH segments drawn, GAP left out (about 1.3 m and 0.7 m). test.10-11 measured
@@ -635,8 +616,6 @@ end
 
 local drew = false
 
-local on_settings = nil          -- test builds: function() while the arc is drawn
-
 local function draw_arc(c, c4, ox, oy, oz)
   local _, sh = chef.screen()
   if now() >= scale_next and chef.setting then
@@ -647,7 +626,6 @@ local function draw_arc(c, c4, ox, oy, oz)
   end
   local px_angle = (tonumber(c.fov) or 0.96) / math.max(1, sh or 1080)
   local offsets = { -1 / render_scale, 0, 1 / render_scale }
-  if on_settings then on_settings() end
   world_strip(c, path(c, c4, ox, oy, oz), chef.color(COLOR[1], COLOR[2], COLOR[3], 255), px_angle, offsets)
   drew = true
 end
@@ -759,7 +737,6 @@ local function c4_icon(c)
   if not show_icon then return end
   if now() >= icon_next then
     icon_next = now() + 0.1
-    update_feet(c)
     icon_mode = hand_pose() == C4_GRIP and (c4_posed or not in_vehicle()) and c4_mode(true) or nil
   end
   if icon_mode then draw_icon(icon_mode) end
@@ -768,137 +745,22 @@ end
 -- ------------------------------------------------------------------ the hold's end
 
 -- the hold, or nil once the throw has left my hand
-local function follow_hold(c)
+local function follow_hold()
   if not hold then return nil end
   local h = hold
   local hx, hy, hz = h.pos[1], h.pos[2], h.pos[3]
   if h.off and me then hx, hy, hz = me[1] + h.off[1], me[2] + h.off[2], me[3] + h.off[3] end
-  local gone, flying = now() - h.at > (h.c4 and C4_HOLD or HOLD_MOST), nil
+  local gone = now() - h.at > (h.c4 and C4_HOLD or HOLD_MOST)
   if not gone and not h.c4 then
     local x, y, z
     if chef.unit_alive(h.unit) then x, y, z = chef.unit_position(h.unit) end
-    if not x or (x - hx) ^ 2 + (y - hy) ^ 2 + (z - hz) ^ 2 >= HOLD_GONE * HOLD_GONE then gone, flying = true, h.unit end
+    gone = not x or (x - hx) ^ 2 + (y - hy) ^ 2 + (z - hz) ^ 2 >= HOLD_GONE * HOLD_GONE
   end
   if gone then
-    if on_hold then on_hold(c, h, 'end', flying) end
     hold = nil
     return nil
   end
   return h
-end
-
--- ------------------------------------------------------------------ test builds only: moving throws
--- Does the arc match throws on the move? At each throw: my velocity then (from my feet over the last MOVE_OVER s), the
--- throw's real velocity (fitted on its flight from the release on: when the hold ends), and the drawn
--- one, all as forward / right as the camera looked and up; and how long the hold lasted. Logged per throw.
-local said_render = nil
-on_settings = function()
-  local text = string.format('render scale %.2f, upscaling method %s quality %s, sharpening %s', render_scale,
-    tostring(chef.setting('render_settings.upscaling_method')), tostring(chef.setting('render_settings.upscaling_quality')),
-    tostring(chef.setting('render_settings.sharpening_enabled')))
-  if text ~= said_render then said_render = text; log('arc drawn with %s', text) end
-end
-local measuring = nil            -- { c4, cam, pitch, move, drawn, start, release, unit, samples }
-
-local C4_CHARGE = '9b75217d8312dd67'
-local charge_watch = chef.watch and chef.watch({ [C4_CHARGE] = true }, 0.5)
-local said_pose, pose_next = false, 0
-on_frame = function(c)
-  local t = now()
-  if t >= pose_next then             -- the hand pose, when it changes (which weapons share C4's 42?)
-    pose_next = t + 0.25
-    local g = hand_pose()
-    if g ~= said_pose then
-      said_pose = g
-      log('hand pose %s (C4 detonator %s)', tostring(g), det_watch and #det_watch.items > 0 and 'about' or 'none')
-    end
-  end
-  local m = measuring
-  if m and m.wait_c4 then            -- C4: the new charge, listed some time after it left the hand
-    charge_watch.refresh()
-    for _, it in ipairs(charge_watch.items) do
-      if not m.before[it.unit] and chef.unit_alive(it.unit) then m.unit, m.wait_c4 = it.unit, nil end
-    end
-    if m.wait_c4 and t - m.release > 1.5 then
-      log('throw (c4): no new charge seen in 1.5 s')
-      measuring = nil
-    end
-    return
-  end
-  if not (m and m.unit) then return end
-  if not chef.unit_alive(m.unit) or t - m.release > 2.5 then
-    measuring = nil
-    local s, ls = {}, nil              -- from 0.1 s after the release until it hits something (its speed halves)
-    for i, p in ipairs(m.samples) do
-      local q = m.samples[i - 1]
-      if p[1] - m.release >= 0.1 then
-        if q and p[1] > q[1] then
-          local sp = math.sqrt((p[2] - q[2]) ^ 2 + (p[3] - q[3]) ^ 2 + (p[4] - q[4]) ^ 2) / (p[1] - q[1])
-          if ls and sp < ls * 0.5 then break end
-          ls = sp
-        end
-        s[#s + 1] = p
-      end
-    end
-    if #s < 4 then log('throw (%s): too few samples (%d)', m.c4 and 'c4' or 'stratagem', #s) return end
-    -- x, y as lines and z as a parabola in t (from the release): least squares
-    local S, Sx, Sy, Sz = { 0, 0, 0, 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0, 0 }
-    for _, p in ipairs(s) do
-      local u = p[1] - m.release
-      for k = 0, 4 do S[k + 1] = S[k + 1] + u ^ k end
-      for k = 0, 2 do Sz[k + 1] = Sz[k + 1] + p[4] * u ^ k end
-      for k = 0, 1 do Sx[k + 1] = Sx[k + 1] + p[2] * u ^ k; Sy[k + 1] = Sy[k + 1] + p[3] * u ^ k end
-    end
-    local d2 = S[1] * S[3] - S[2] * S[2]
-    local vx, vy = (S[1] * Sx[2] - S[2] * Sx[1]) / d2, (S[1] * Sy[2] - S[2] * Sy[1]) / d2
-    local A = { { S[1], S[2], S[3], Sz[1] }, { S[2], S[3], S[4], Sz[2] }, { S[3], S[4], S[5], Sz[3] } }
-    for i = 1, 3 do
-      for j = i + 1, 3 do
-        local f = A[j][i] / A[i][i]
-        for k = i, 4 do A[j][k] = A[j][k] - f * A[i][k] end
-      end
-    end
-    local z = {}
-    for i = 3, 1, -1 do
-      local v = A[i][4]
-      for k = i + 1, 3 do v = v - A[i][k] * z[k] end
-      z[i] = v / A[i][i]
-    end
-    local fx, fy = m.cam[1], m.cam[2]
-    local function parts(x, y) return x * fx + y * fy, x * fy - y * fx end
-    local flf, flr = parts(vx, vy)
-    local drf, drr = parts(m.drawn[1], m.drawn[2])
-    local mvf, mvr = parts(m.move[1], m.move[2])
-    log('throw (%s): moving %.1f fwd %.1f right %.1f up m/s; flew %.1f fwd %.1f right %.1f up (gravity %.2f, %d samples); '
-        .. 'drawn %.1f fwd %.1f right %.1f up; off by %.1f fwd %.1f right %.1f up; camera %.1f deg; held the arc %.2f s',
-        m.c4 and 'c4' or 'stratagem', mvf, mvr, m.move[3], flf, flr, z[2], -2 * z[3], #s, drf, drr, m.drawn[3],
-        flf - drf, flr - drr, z[2] - m.drawn[3], math.deg(m.pitch), m.release - m.start)
-    return
-  end
-  local x, y, z = chef.unit_position(m.unit)
-  if x then m.samples[#m.samples + 1] = { t, x, y, z } end
-end
-
-on_hold = function(c, h, what, flying)
-  if what == 'start' then
-    local move = { my_move() }
-    local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
-    local vx, vy, vz = throw_velocity(c, h.c4)
-    measuring = { c4 = h.c4, cam = { c.fx / fh, c.fy / fh }, pitch = camera_pitch(c), move = move,
-                  drawn = { vx, vy, vz }, start = now(), samples = {}, before = {} }
-    if h.c4 and charge_watch then
-      for _, it in ipairs(charge_watch.items) do measuring.before[it.unit] = true end
-    end
-  elseif measuring and not measuring.unit then
-    if flying then
-      measuring.unit, measuring.release = flying, now()
-    elseif h.c4 and charge_watch then  -- fitted from where it left the hand, C4_HOLD s after the press
-      measuring.release, measuring.wait_c4 = h.at + C4_HOLD, true
-    else
-      log('throw (%s): nothing seen leaving the hand in %.1f s', h.c4 and 'c4' or 'stratagem', HOLD_MOST)
-      measuring = nil
-    end
-  end
 end
 
 -- ------------------------------------------------------------------ the frame
@@ -916,13 +778,12 @@ function M.update(dt)
     ball, aiming, looking = nil, false, false
     c4_aim, c4_posed, c4_det, hold = false, false, nil, nil
   end
+  update_feet(c)
+  update_trail()
   read_input(c)
   read_c4(c)
   c4_icon(c)
-  update_feet(c)
-  update_trail()
-  local h = follow_hold(c)
-  if on_frame then on_frame(c) end
+  local h = follow_hold()
   if aiming then
     draw_arc(c, false, release_point(c, ball, false))
   elseif c4_aim then
@@ -939,7 +800,6 @@ function M.shutdown()
   if det_watch then det_watch.stop() end
   if vehicle_watch then vehicle_watch.stop() end
   if ball_watch then ball_watch.stop() end
-  if charge_watch then charge_watch.stop() end
 end
 
 return M

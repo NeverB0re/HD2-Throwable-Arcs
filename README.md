@@ -14,12 +14,15 @@ A **HELLDIVERS 2** mod that draws where your throw will fly while you aim it:
 
 The arc is a line in the 3D world: walls and ground hide it, so the point where it disappears into the terrain is
 where the throw lands. It starts where your hand lets go and follows your armour: Servo-Assisted and Desert Stormer
-armours throw farther, and the arc goes with them (all measured from real throws). Throws on the move go a little
-off it.
+armours throw farther, and the arc goes with them (all measured from real throws). It stays up until the throw leaves
+your hand, and throws on the move are drawn too: the game adds some of your speed forward or back to a throw (none
+sideways), and the arc with it.
 
 **Render Scale below native:** with the game's Anti-Aliasing off, the game clips 3D drawing to a corner of the
-screen, and the arc with it. Turn Anti-Aliasing on (any quality) and the arc shows whole. Right after changing it the
-arc can look faint blue or be missing at some angles for a moment; it settles after moving around a little.
+screen, and the arc with it. Turn Anti-Aliasing on (any quality) and the arc shows whole.
+
+**Thick air:** in a sandstorm or fog the far part of the arc can look faint blue: the game's fog on drawn lines, which
+a mod can't turn off.
 
 Grenades aren't drawn: which grenade is in your hand can't be told before it is thrown.
 

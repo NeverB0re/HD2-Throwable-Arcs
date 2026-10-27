@@ -305,8 +305,9 @@ class ArcTest(unittest.TestCase):
         self.assertGreater(len(self.lines()), 20)
 
     def c4_in_hand(self):
-        """C4 is the weapon: its backpack on me, the detonator in my right hand."""
+        """C4 is the weapon: its backpack on me, the detonator in my right hand, and C4's hand pose."""
         self.add_unit("2a18f81c44a26771", -0.15, 0.1, 1.3)
+        self.hand_pose(42)
         return self.add_unit("51f50d6321f52f3d", -0.05, -0.4, 1.05)
 
     def test_c4_aimed_with_right(self):
@@ -455,10 +456,22 @@ class ArcTest(unittest.TestCase):
         self.frames(10)
         self.assertEqual(self.shapes(), [])
 
+    def test_no_c4_arc_without_the_hand_pose(self):
+        # the hand pose unreadable: the detonator going forward into the aim alone is no C4 aim (1.0.3: the Censor)
+        self.add_unit("2a18f81c44a26771", -0.15, 0.1, 1.3)
+        det = self.add_unit("51f50d6321f52f3d", -0.05, -0.4, 1.05)
+        self.c4_object(80)
+        self.fake["mouse"]["right"] = True
+        self.frames(5)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(5)
+        self.assertEqual(self.lines(), [])
+
     def test_hand_pose_found_later(self):
         self.fake["no_bitmap"] = True
         # the variable not there yet at first: looked for again 5 s later
-        self.c4_in_hand()
+        self.add_unit("2a18f81c44a26771", -0.15, 0.1, 1.3)
+        self.add_unit("51f50d6321f52f3d", -0.05, -0.4, 1.05)
         self.c4_object(80)
         self.frames(30)
         self.assertEqual(self.shapes(), [])
@@ -699,40 +712,6 @@ class ArcTest(unittest.TestCase):
         self.lua.eval("function(u) u.x = 0.2 end")(det)
         self.frames(5)
         self.assertEqual(self.lines(), [])
-
-    def test_a_moving_throw_is_measured(self):
-        # test builds: running 3 m/s forward, the ball thrown (the fake flies it from 0.1 s on, 22 m/s at 19 degrees)
-        self.aim(10)
-        self.lua.eval("function(f) f.run = 3 end")(self.fake)
-        for _ in range(10):
-            self.lua.eval("function(f) f.me.x = f.me.x + 3 / 60 end")(self.fake)
-            self.frames(1)
-        self.fake["mouse"]["left"] = False
-        self.fake.throw("16f397ca5f51f271", 22, 19, 9.81, self.ball)
-        self.frames(200)
-        m = re.search(r"throw \(stratagem\): moving ([-\d.]+) fwd ([-\d.]+) right .*flew ([-\d.]+) fwd ([-\d.]+) right "
-                      r"([-\d.]+) up \(gravity ([-\d.]+)", self.logs())
-        self.assertTrue(m, self.logs())
-        self.assertAlmostEqual(float(m.group(1)), 3, delta=0.2)
-        self.assertAlmostEqual(float(m.group(3)), 22 * math.cos(math.radians(19)), delta=0.3)
-        self.assertAlmostEqual(float(m.group(6)), 9.81, delta=0.3)
-        self.assertRegex(self.logs(), r"held the arc 0\.\d\d s")
-
-    def test_a_c4_throw_is_measured(self):
-        # test builds: the charge, listed only once it flies, is fitted from 0.15 s after the press
-        det = self.c4_in_hand()
-        self.fake["mouse"]["right"] = True
-        self.frames(5)
-        self.lua.eval("function(u) u.x = 0.42 end")(det)
-        self.frames(2)
-        self.fake["mouse"]["left"] = True
-        self.frames(2)
-        self.fake.throw("9b75217d8312dd67", 22, 25, 9.81)
-        self.frames(200)
-        m = re.search(r"throw \(c4\): moving .*flew ([-\d.]+) fwd .*held the arc ([\d.]+) s", self.logs())
-        self.assertTrue(m, self.logs())
-        self.assertAlmostEqual(float(m.group(1)), 22 * math.cos(math.radians(25)), delta=0.3)
-        self.assertAlmostEqual(float(m.group(2)), 0.15, delta=0.02)
 
     def test_walking_forward_throws_farther(self):
         # the throw is faster by my speed along the aim (1.4 times it, up to 3 m/s; camera along +x), none across

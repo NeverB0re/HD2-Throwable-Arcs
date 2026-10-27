@@ -1,7 +1,13 @@
 Brief overview (Nexus "Brief overview" field):
 See where your stratagem ball or C4 charge will land before you throw it: a dashed arc that walls and ground hide, with throw-range armour taken into account, and C4's DEPLOY / DETONATE icon by the crosshair. Needs Chef Shared Loader 1.2+.
 
-Changelog 1.0.2 (Nexus changelog field, one change per line):
+Changelog 1.0.3 (Nexus changelog field, one change per line):
+Throws on the move: the arc now follows them. The game adds some of your speed forward or back to a throw (measured on C4 and stratagem throws); sideways movement adds none.
+The arc stays up until the throw actually leaves your hand, so it doesn't vanish while the arm swings.
+C4: no arc unless C4 is really in your hand (a report of an arc while aiming the Censor rifle).
+Less work each frame.
+
+Changelog 1.0.2:
 Renamed from Throwable Arcs to Stratagem and C4 Trajectory. Nothing else changed; your settings are kept.
 
 Changelog 1.0.1:
@@ -17,5 +23,5 @@ Less work per throw: your armour is checked once instead of at every throw.
 Changelog 1.0.0:
 First release: arcs for stratagem balls and aimed C4, throw-range armour, C4 mode icon.
 
-File to upload: release/Stratagem and C4 Trajectory v1.0.2.zip
+File to upload: release/Stratagem and C4 Trajectory v1.0.3.zip
 Requirements to tick on Nexus: Chef Shared Loader (17760). Credits/permissions: NarrowHUD (luka189, 17882), HD2 Transmog (16633).
