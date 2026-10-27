@@ -718,6 +718,27 @@ class ArcTest(unittest.TestCase):
         self.assertAlmostEqual(float(m.group(6)), 9.81, delta=0.3)
         self.assertRegex(self.logs(), r"held the arc 0\.\d\d s")
 
+    def test_walking_forward_throws_farther(self):
+        # the arc carries 0.58 of my speed along the aim (camera along +x), none across
+        def reach():
+            ls = self.lines()
+            xs = [v for l in ls for v in (l[0], l[3])]
+            ys = [v for l in ls for v in (l[1], l[4])]
+            return max(xs) - ls[0][0], max(abs(y - ls[0][1]) for y in ys)
+        self.aim(10)
+        still, _ = reach()
+        for _ in range(10):
+            self.lua.eval("function(f) f.me.x = f.me.x + 3 / 60 end")(self.fake)
+            self.frames(1)
+        ahead, _ = reach()
+        self.assertGreater(ahead - still, 1.5)
+        for _ in range(10):
+            self.lua.eval("function(f) f.me.y = f.me.y + 3 / 60 end")(self.fake)
+            self.frames(1)
+        across, wide = reach()
+        self.assertAlmostEqual(across, still, delta=0.3)
+        self.assertLess(wide, 0.3)
+
     def test_shooting_draws_nothing(self):
         self.fake["mouse"]["left"] = True                # no ball in hand: a shot
         self.frames(90)

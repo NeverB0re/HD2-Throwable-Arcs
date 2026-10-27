@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.3-test.3'
+local VERSION = '1.0.3-test.4'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -67,6 +67,25 @@ local function update_feet(c)
     end
   end
   mine = me_unit
+end
+
+-- My velocity, from my feet over the last MOVE_OVER s. A throw carries CARRY of it along where I aim and none across
+-- (1.0.3-test.1 to 3, 13 throws: walking forward throws farther, strafing throws no wider).
+local MOVE_OVER, CARRY = 0.15, 0.58
+local trail = {}                 -- my feet: { t, x, y, z }, the last MOVE_OVER s and a bit
+
+local function update_trail()
+  if not me then trail = {} return end
+  local t = now()
+  trail[#trail + 1] = { t, me[1], me[2], me[3] }
+  while #trail > 2 and t - trail[2][1] >= MOVE_OVER do table.remove(trail, 1) end
+end
+
+local function my_move()
+  local a, b = trail[1], trail[#trail]
+  if not (a and b and b[1] - a[1] > 0.02) then return 0, 0, 0 end
+  local dt = b[1] - a[1]
+  return (b[2] - a[2]) / dt, (b[3] - a[3]) / dt, (b[4] - a[4]) / dt
 end
 
 -- ------------------------------------------------------------------ my armour (the throw-range perks)
@@ -568,7 +587,9 @@ local function throw_velocity(c, c4)
   local hx, hy = 0, 1
   if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
   local speed = (c4 and C4_SPEED or SPEED) * speed_up(c4)
-  return hx * speed * math.cos(pitch), hy * speed * math.cos(pitch), speed * math.sin(pitch)
+  local mx, my = my_move()
+  local across = speed * math.cos(pitch) + CARRY * (mx * hx + my * hy)
+  return hx * across, hy * across, speed * math.sin(pitch)
 end
 
 -- the throw's path, from where the ball or charge is let go, until DEEPEST under my feet or MOST_T: a list of points
@@ -765,8 +786,8 @@ local function follow_hold(c)
 end
 
 -- ------------------------------------------------------------------ test builds only: moving throws
--- Does the game add my running speed to a throw? At each throw: my velocity then (from my feet over the last
--- MOVE_OVER s), the throw's real velocity (fitted on its flight from the release on: when the hold ends), and the drawn
+-- Does the arc match throws on the move? At each throw: my velocity then (from my feet over the last MOVE_OVER s), the
+-- throw's real velocity (fitted on its flight from the release on: when the hold ends), and the drawn
 -- one, all as forward / right as the camera looked and up; and how long the hold lasted. Logged per throw.
 local said_render = nil
 on_settings = function()
@@ -775,8 +796,6 @@ on_settings = function()
     tostring(chef.setting('render_settings.sharpening_enabled')))
   if text ~= said_render then said_render = text; log('arc drawn with %s', text) end
 end
-local MOVE_OVER = 0.15
-local trail = {}                 -- my feet: { t, x, y, z }, the last MOVE_OVER s and a bit
 local measuring = nil            -- { c4, cam, pitch, move, drawn, start, release, unit, samples }
 
 local said_pose, pose_next = false, 0
@@ -789,10 +808,6 @@ on_frame = function(c)
       said_pose = g
       log('hand pose %s (C4 detonator %s)', tostring(g), det_watch and #det_watch.items > 0 and 'about' or 'none')
     end
-  end
-  if me then
-    trail[#trail + 1] = { t, me[1], me[2], me[3] }
-    while #trail > 2 and t - trail[2][1] >= MOVE_OVER do table.remove(trail, 1) end
   end
   local m = measuring
   if not (m and m.unit) then return end
@@ -851,12 +866,7 @@ end
 
 on_hold = function(c, h, what, flying)
   if what == 'start' then
-    local move = { 0, 0, 0 }
-    local a, b = trail[1], trail[#trail]
-    if a and b and b[1] - a[1] > 0.02 then
-      local dt = b[1] - a[1]
-      move = { (b[2] - a[2]) / dt, (b[3] - a[3]) / dt, (b[4] - a[4]) / dt }
-    end
+    local move = { my_move() }
     local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
     local vx, vy, vz = throw_velocity(c, h.c4)
     measuring = { c4 = h.c4, cam = { c.fx / fh, c.fy / fh }, pitch = camera_pitch(c), move = move,
@@ -892,6 +902,7 @@ function M.update(dt)
   read_c4(c)
   c4_icon(c)
   update_feet(c)
+  update_trail()
   local h = follow_hold(c)
   if on_frame then on_frame(c) end
   if aiming then
