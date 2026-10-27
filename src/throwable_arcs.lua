@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.3-test.5'
+local VERSION = '1.0.3-test.6'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -69,9 +69,10 @@ local function update_feet(c)
   mine = me_unit
 end
 
--- My velocity, from my feet over the last MOVE_OVER s. A throw carries CARRY of it along where I aim and none across
--- (1.0.3-test.1 to 3, 13 throws: walking forward throws farther, strafing throws no wider).
-local MOVE_OVER, CARRY = 0.15, 0.58
+-- My velocity, from my feet over the last MOVE_OVER s. A throw is faster by my speed along where I aim, up to CARRY_MOST
+-- m/s either way, and gets none of it across (1.0.3-test.1 to 5, 23 throws: walking forward throws farther and higher,
+-- running no farther than walking, strafing no wider).
+local MOVE_OVER, CARRY_MOST = 0.15, 3
 local trail = {}                 -- my feet: { t, x, y, z }, the last MOVE_OVER s and a bit
 
 local function update_trail()
@@ -586,10 +587,10 @@ local function throw_velocity(c, c4)
   local pitch = camera_pitch(c) + (c4 and C4_LIFT or LIFT)
   local hx, hy = 0, 1
   if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
-  local speed = (c4 and C4_SPEED or SPEED) * speed_up(c4)
   local mx, my = my_move()
-  local across = speed * math.cos(pitch) + CARRY * (mx * hx + my * hy)
-  return hx * across, hy * across, speed * math.sin(pitch)
+  local carried = math.max(-CARRY_MOST, math.min(CARRY_MOST, mx * hx + my * hy))
+  local speed = (c4 and C4_SPEED or SPEED) * speed_up(c4) + carried
+  return hx * speed * math.cos(pitch), hy * speed * math.cos(pitch), speed * math.sin(pitch)
 end
 
 -- the throw's path, from where the ball or charge is let go, until DEEPEST under my feet or MOST_T: a list of points
