@@ -191,8 +191,8 @@ class ArcTest(unittest.TestCase):
     def test_the_arc_starts_where_the_ball_is_let_go_and_goes_on_below_my_feet(self):
         self.aim(10)
         lines = self.lines()
-        self.assertEqual(len(lines) % 2, 0, "2 lines side by side per segment")
-        first = [(a + b) / 2 for a, b in zip(lines[0][:3], lines[1][:3])]
+        self.assertEqual(len(lines) % 3, 0, "3 lines side by side per segment")
+        first = lines[1][:3]                        # the middle one
         self.assertAlmostEqual(first[0], -0.05, delta=0.02)
         self.assertAlmostEqual(first[1], -0.3, delta=0.02)
         self.assertAlmostEqual(first[2], 1.9, delta=0.02, msg="let go 0.4 m above where it is held")

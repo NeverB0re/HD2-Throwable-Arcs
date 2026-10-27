@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.3-test.1'
+local VERSION = '1.0.3-test.2'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -257,19 +257,24 @@ local was_hold = false
 
 -- After the throw is let go (left released with a ball, left pressed with C4 aimed) the arc stays up until it leaves my
 -- hand (1.0.3; the swing takes a moment): it keeps following the camera, from where the hand was then, kept by my feet.
--- It ends when the ball is HOLD_GONE m or more from there, or a C4 charge shows up within HOLD_GONE m of it, or after
--- HOLD_MOST s.
-local HOLD_MOST, HOLD_GONE = 0.6, 1.5
+-- It ends when the ball is HOLD_GONE m or more from there, or a new C4 charge shows up within C4_GONE m of it (one is
+-- first seen about 3 m off: 1.0.3-test.1 looked within 1.5 m and saw none), or after HOLD_MOST s.
+local HOLD_MOST, HOLD_GONE, C4_GONE = 0.6, 1.5, 6
 local hold = nil                 -- { c4, unit, off = { from my feet }, at, pos }
 local on_hold = nil              -- test builds: function(c, hold, what) at 'start' and 'end'
 local on_frame = nil             -- test builds: function(c) each frame
+local C4_CHARGE = '9b75217d8312dd67'
+local charge_watch = chef.watch and chef.watch({ [C4_CHARGE] = true }, 0.5)
 
 local function start_hold(c, unit, c4)
   local x, y, z
   if unit and chef.unit_alive(unit) then x, y, z = chef.unit_position(unit) end
   if not x then hold = nil return end
   hold = { c4 = c4, unit = unit, at = now(), pos = { x, y, z },
-           off = me and { x - me[1], y - me[2], z - me[3] } or nil }
+           off = me and { x - me[1], y - me[2], z - me[3] } or nil, before = {} }
+  if c4 and charge_watch then
+    for _, it in ipairs(charge_watch.items) do hold.before[it.unit] = true end
+  end
   if on_hold then on_hold(c, hold, 'start') end
 end
 
@@ -529,10 +534,9 @@ end
 
 -- ------------------------------------------------------------------ drawing
 local COLOR = { 255, 255, 255 }
-local WIDTH = 3                  -- px: the arc's width on the screen
--- Below native Render Scale (with anti-aliasing on) parts of the arc came out faint blue: the game draws the scene at
--- the lower resolution, and its temporal anti-aliasing blends a line a pixel or two wide there into what is around it.
--- There the arc is 3 lines a render pixel apart, 3 render pixels wide. The render scale: the game's settings file's
+-- Parts of the arc came out faint blue now and then (1.0.1-test.3, 1.0.3-test.1): the game's temporal anti-aliasing /
+-- upscaling blends a thin line (no motion of its own to follow) into what is around it, more so when it is two lines
+-- with a gap. The arc is 3 lines a render pixel apart, 3 render pixels wide, at any render scale. The render scale: the game's settings file's
 -- render resolution over the screen's height, read every SCALE_EVERY s.
 local SCALE_EVERY = 2
 local render_scale, scale_next = 1, 0
@@ -589,8 +593,8 @@ local function path(c, c4, ox, oy, oz)
   return pts
 end
 
--- the arc dashed (segment i drawn unless it falls in a gap), each drawn segment as 2 lines side by side, about WIDTH
--- px across, across the view (test.12 drew 3)
+-- the arc dashed (segment i drawn unless it falls in a gap), each drawn segment as lines side by side (offsets: px off
+-- its middle), across the view
 local function world_strip(c, pts, col, px_angle, offsets)
   for i = 2, #pts do
     if (i - 2) % (DASH + GAP) < DASH then
@@ -612,7 +616,7 @@ end
 
 local drew = false
 
-local NATIVE = { -(WIDTH - 1) / 2, (WIDTH - 1) / 2 }   -- px off the arc's middle, 2 lines
+local on_settings = nil          -- test builds: function() while the arc is drawn
 
 local function draw_arc(c, c4, ox, oy, oz)
   local _, sh = chef.screen()
@@ -623,8 +627,8 @@ local function draw_arc(c, c4, ox, oy, oz)
     render_scale = (rh and sh and sh > 0) and math.min(1, rh / sh) or 1
   end
   local px_angle = (tonumber(c.fov) or 0.96) / math.max(1, sh or 1080)
-  local offsets = NATIVE
-  if render_scale < 0.95 then offsets = { -1 / render_scale, 0, 1 / render_scale } end
+  local offsets = { -1 / render_scale, 0, 1 / render_scale }
+  if on_settings then on_settings() end
   world_strip(c, path(c, c4, ox, oy, oz), chef.color(COLOR[1], COLOR[2], COLOR[3], 255), px_angle, offsets)
   drew = true
 end
@@ -743,8 +747,6 @@ local function c4_icon(c)
 end
 
 -- ------------------------------------------------------------------ the hold's end
-local C4_CHARGE = '9b75217d8312dd67'
-local charge_watch = chef.watch and chef.watch({ [C4_CHARGE] = true }, 0.5)
 
 -- the hold, or nil once the throw has left my hand (a C4 charge's list is asked for afresh each frame of it: a charge
 -- is no unit until it flies)
@@ -758,9 +760,9 @@ local function follow_hold(c)
     if charge_watch then
       charge_watch.refresh()
       for _, it in ipairs(charge_watch.items) do
-        if chef.unit_alive(it.unit) then
+        if not h.before[it.unit] and chef.unit_alive(it.unit) then
           local x, y, z = chef.unit_position(it.unit)
-          if x and (x - hx) ^ 2 + (y - hy) ^ 2 + (z - hz) ^ 2 < HOLD_GONE * HOLD_GONE then gone, flying = true, it.unit end
+          if x and (x - hx) ^ 2 + (y - hy) ^ 2 + (z - hz) ^ 2 < C4_GONE * C4_GONE then gone, flying = true, it.unit end
         end
       end
     end
@@ -781,12 +783,28 @@ end
 -- Does the game add my running speed to a throw? At each throw: my velocity then (from my feet over the last
 -- MOVE_OVER s), the throw's real velocity (fitted on its flight from the release on: when the hold ends), and the drawn
 -- one, all as forward / right as the camera looked and up; and how long the hold lasted. Logged per throw.
+local said_render = nil
+on_settings = function()
+  local text = string.format('render scale %.2f, upscaling method %s quality %s, sharpening %s', render_scale,
+    tostring(chef.setting('render_settings.upscaling_method')), tostring(chef.setting('render_settings.upscaling_quality')),
+    tostring(chef.setting('render_settings.sharpening_enabled')))
+  if text ~= said_render then said_render = text; log('arc drawn with %s', text) end
+end
 local MOVE_OVER = 0.15
 local trail = {}                 -- my feet: { t, x, y, z }, the last MOVE_OVER s and a bit
 local measuring = nil            -- { c4, cam, pitch, move, drawn, start, release, unit, samples }
 
+local said_pose, pose_next = false, 0
 on_frame = function(c)
   local t = now()
+  if t >= pose_next then             -- the hand pose, when it changes (which weapons share C4's 42?)
+    pose_next = t + 0.25
+    local g = hand_pose()
+    if g ~= said_pose then
+      said_pose = g
+      log('hand pose %s (C4 detonator %s)', tostring(g), det_watch and #det_watch.items > 0 and 'about' or 'none')
+    end
+  end
   if me then
     trail[#trail + 1] = { t, me[1], me[2], me[3] }
     while #trail > 2 and t - trail[2][1] >= MOVE_OVER do table.remove(trail, 1) end
