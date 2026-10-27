@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.4'
+local VERSION = '1.1.0-test.5'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -907,7 +907,7 @@ end
 -- barrel. The round: of the units new since the click and first seen within 10 m of the camera, the one gone farthest
 -- (test.2 looked only for the probe's five rounds, so the EAT, the GR-8 and the Punisher Plasma went unchecked).
 -- (in a block of its own: the file is near Lua 5.1's 200 locals)
-local watch_shots, camera_turn
+local watch_shots, camera_turn, watch_c4
 do
 local CHECK_AT, CHECK_MOST, CHECK_NEW, CHECK_FAR = 0.3, 0.8, 0.15, 20
 local RUNTIME_BUILT = '46cab355bd8d4d37'   -- asking where one is ends the game
@@ -1018,6 +1018,62 @@ function watch_shots(c, w, u, aim, muzzle)
   was_throw = down
   cam_was = { now(), math.atan2(c.fy, c.fx), camera_pitch(c) }
   follow_check()
+end
+
+-- test.5: each C4 throw, the charge (a new unit of C4_CHARGE) is compared C4_AT s after it is first seen with the arc
+-- as drawn on the hold's last frame: does walking sideways carry it (1.0.3-test.1 found it didn't)?
+local C4_CHARGE, C4_AT = '9b75217d8312dd67', 0.25
+local c4_check = nil
+function watch_c4(c, h)
+  local k = c4_check
+  if h and h.c4 then
+    if not k or k.done then
+      k = { before = {} }
+      for _, r in ipairs(all_units()) do k.before[r] = true end
+      c4_check = k
+    end
+    local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
+    k.pts, k.at = path(c, true, release_point(c, h.unit, true, h.off)), now()
+    k.mx, k.my = my_move()
+    k.hx, k.hy = c.fx / fh, c.fy / fh
+    k.cx, k.cy, k.cz = c.x, c.y, c.z
+    return
+  end
+  if not k or k.done then return end
+  local t = now()
+  if t - k.at > 1 then
+    log('c4 check: %s', k.charge and 'the charge went' or 'no charge seen')
+    k.done = true
+    return
+  end
+  if not k.charge then
+    for _, r in ipairs(all_units()) do
+      if not k.before[r] then
+        k.before[r] = true
+        if chef.unit_alive(r) and chef.unit_kind(r) == C4_CHARGE then k.charge, k.first = r, t end
+      end
+    end
+    return
+  end
+  if t - k.first < C4_AT then return end
+  local x, y, z = chef.unit_position(k.charge)
+  if not (x and chef.unit_alive(k.charge)) then return end
+  -- the nearest point on the arc's segments
+  local best, bx, by, bz = math.huge
+  for i = 2, #k.pts do
+    local p, q = k.pts[i - 1], k.pts[i]
+    local dx, dy, dz = q[1] - p[1], q[2] - p[2], q[3] - p[3]
+    local l2 = dx * dx + dy * dy + dz * dz
+    local f = l2 > 0 and math.max(0, math.min(1, ((x - p[1]) * dx + (y - p[2]) * dy + (z - p[3]) * dz) / l2)) or 0
+    local ax, ay, az = p[1] + dx * f, p[2] + dy * f, p[3] + dz * f
+    local d = (x - ax) ^ 2 + (y - ay) ^ 2 + (z - az) ^ 2
+    if d < best then best, bx, by, bz = d, ax, ay, az end
+  end
+  local hx, hy = k.hx, k.hy
+  log('c4 check: moving %.1f ahead %.1f right; at %.0f m the charge is %.2f m right %.2f m up of the arc',
+      k.mx * hx + k.my * hy, k.mx * hy - k.my * hx, math.sqrt((x - k.cx) ^ 2 + (y - k.cy) ^ 2 + (z - k.cz) ^ 2),
+      (x - bx) * hy - (y - by) * hx, z - bz)
+  k.done = true
 end
 end
 
@@ -1181,6 +1237,7 @@ function M.update(dt)
     aim = weapon_aim(c, weapon_kind, weapon_unit, math.sqrt(turn * turn + nod * nod) >= STILL_TURN)
   end
   watch_shots(c, weapon, weapon_unit, aim, muzzle)
+  watch_c4(c, h)
   if aiming then
     draw_arc(c, false, release_point(c, ball, false))
   elseif c4_aim then

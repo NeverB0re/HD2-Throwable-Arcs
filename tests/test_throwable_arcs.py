@@ -335,6 +335,22 @@ class ArcTest(unittest.TestCase):
         self.frames(1)
         self.assertEqual(self.lines(), [])
 
+    def test_a_c4_throw_is_checked_against_the_arc(self):
+        det = self.c4_in_hand()
+        self.fake["mouse"]["right"] = True
+        self.frames(5)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(2)
+        self.fake["mouse"]["left"] = True
+        self.frames(8)                              # the hold: its arc as on the last frame
+        mid = self.lines()[60]
+        self.frames(2)                              # the hold over
+        # the charge turns up 0.3 m right of the arc (right: -y, the camera looking along +x) and stays there
+        self.add_unit("9b75217d8312dd67", mid[0], mid[1] - 0.3, mid[2])
+        self.frames(30)
+        self.assertRegex(self.logs(), r"c4 check: moving 0\.0 ahead 0\.0 right; at \d+ m the charge is 0\.(2[6-9]|3[0-4]) m right "
+                                      r"-?0\.0\d m up of the arc")
+
     def plug_pad(self):
         """a controller on Pad1: buttons a, left_trigger, right_trigger; fake.pad holds each button's value"""
         self.lua.eval("""function(f)
