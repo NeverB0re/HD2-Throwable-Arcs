@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.3'
+local VERSION = '1.1.0-test.4'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -719,11 +719,20 @@ local MUZZLE, SEG, SEG_FAR, MOST_POINTS = 0.45, 0.66, 0.01, 800
 -- EAT and a GR-8 turned left fired right of the arc). Held still, a weapon points AIM_OFF off the round's way, its own
 -- amount (0.2-2 degrees in the probe): learned while the camera turns less than STILL_TURN degrees/s, AIM_LEARN of the
 -- difference a frame, and taken off the weapon's heading. Until learned, the camera's heading.
--- My velocity is added only along the aim: walking sideways didn't bend the Breacher's round (test.2: 2.2 m/s right
--- drew the arc 0.5 m off at 36 m). Once found, the weapon in hand is kept while aiming lasts and it points within
--- HELD_KEEP of the camera (test.2's arc went away mid-turn, the weapon lagging past HELD_ALONG).
-local STILL_TURN, AIM_LEARN, HELD_KEEP = 8, 0.2, 0.8
+-- test.4: test.3 learned too eagerly (a fifth of the difference a frame, whenever the camera was still): the weapon still
+-- catching up after a turn, and a weapon turned by the game toward a near corner under the crosshair (the Breacher's
+-- barrel 5.3 degrees left, its round 5.1), were taken for its offset, and the arc went back to the camera too soon. Now
+-- learned only once the camera and the weapon have both been still for STILL_FOR s, AIM_LEARN a frame, and never from a
+-- difference more than AIM_ODD degrees off what is known; it starts from AIM_OFF (weapons point 1.3-2.4 degrees above
+-- their round's way, about level across, in the probe and test.3).
+-- My velocity: all of it along the aim; SIDE_CARRY of it across (test.3: walking 2.2 m/s sideways, the GL's round went
+-- 0.6 of it with me, test.2's Breacher 0.3; the Punisher Plasma's clearly went with me; test.3 added none).
+-- Once found, the weapon in hand is kept while aiming lasts and it points within HELD_KEEP of the camera (test.2's arc
+-- went away mid-turn, the weapon lagging past HELD_ALONG).
+local STILL_TURN, STILL_FOR, AIM_LEARN, AIM_ODD, HELD_KEEP = 8, 0.5, 0.05, 1.0, 0.8
+local AIM_OFF, SIDE_CARRY = { 0, 1.5 }, 0.5
 local aim_off = {}               -- weapon kind -> { yaw, pitch } (degrees) the weapon points off the round's way
+local aim_still = { since = nil, yaw = nil, pitch = nil, t = 0 }   -- since when the camera and the weapon are still
 local FIRST_PERSON = 0.6
 local HELD_ALONG, HELD_NEAR = 0.99, 2.5
 -- weapon unit kind -> { speed m/s, gravity factor, drag * caliber^2 / mass, lifetime s or false, name }. From the
@@ -774,13 +783,12 @@ local function held_weapon(c)
   return nil
 end
 
--- the muzzle of a held weapon, as m along the view from the camera
-local function muzzle_along(c, u)
+-- the muzzle of a held weapon: { x, y, z }, or nil
+local function muzzle_of(u)
   local x, y, z = chef.unit_position(u)
   local fx, fy, fz = chef.unit_rotation(u)
-  if not (x and type(fx) == 'number') then return 0 end
-  x, y, z = x + fx * MUZZLE, y + fy * MUZZLE, z + fz * MUZZLE
-  return (x - c.x) * c.fx + (y - c.y) * c.fy + (z - c.z) * c.fz
+  if not (x and type(fx) == 'number') then return nil end
+  return { x + fx * MUZZLE, y + fy * MUZZLE, z + fz * MUZZLE }
 end
 
 local function first_person(c)
@@ -791,8 +799,8 @@ local function first_person(c)
 end
 
 -- the round as it is fired: where it starts and its velocity (mx, my: my velocity on the ground; aim: { yaw, pitch }
--- in radians the round goes, or nil for the camera's)
-local function launch(c, w, mx, my, aim)
+-- in radians the round goes, or nil for the camera's; from: the muzzle, or nil for WEAPON_FROM off the camera)
+local function launch(c, w, mx, my, aim, from)
   local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
   local hx, hy = 0, 1
   if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
@@ -800,31 +808,39 @@ local function launch(c, w, mx, my, aim)
   local f = WEAPON_FROM
   local px, py, pz = c.x + c.fx * f[1] + hy * f[2] + ux * f[3], c.y + c.fy * f[1] - hx * f[2] + uy * f[3],
                      c.z + c.fz * f[1] + uz * f[3]
+  if from then px, py, pz = from[1], from[2], from[3] end
   local pitch = (aim and aim[2] or camera_pitch(c)) + WEAPON_LIFT
   if aim then hx, hy = math.cos(aim[1]), math.sin(aim[1]) end
-  local carried = mx * hx + my * hy
-  return px, py, pz, hx * (w[1] * math.cos(pitch) + carried), hy * (w[1] * math.cos(pitch) + carried),
-         w[1] * math.sin(pitch)
+  local along, across = mx * hx + my * hy, (mx * hy - my * hx) * SIDE_CARRY
+  local s = w[1] * math.cos(pitch) + along
+  return px, py, pz, hx * s + hy * across, hy * s - hx * across, w[1] * math.sin(pitch)
 end
 
--- where the round goes, from the weapon's heading less what it points off when held still ({ yaw, pitch } radians),
--- or nil while that isn't known yet; learns that while the camera is still
+-- where the round goes, from the weapon's heading less what it points off when held still ({ yaw, pitch } radians);
+-- learns that while the camera and the weapon are still
 local function weapon_aim(c, kind, u, turning)
   local fx, fy, fz = chef.unit_rotation(u)
   if type(fx) ~= 'number' then return nil end
   local wyaw, wpitch = math.deg(math.atan2(fy, fx)), math.deg(math.atan2(fz, math.sqrt(fx * fx + fy * fy)))
   local cyaw, cpitch = math.deg(math.atan2(c.fy, c.fx)), math.deg(camera_pitch(c))
+  local st, t = aim_still, now()
+  local swing = 0
+  if st.yaw and t > st.t then
+    swing = math.sqrt(((wyaw - st.yaw + 180) % 360 - 180) ^ 2 + (wpitch - st.pitch) ^ 2) / (t - st.t)
+  end
+  st.yaw, st.pitch, st.t = wyaw, wpitch, t
+  if turning or swing >= STILL_TURN then st.since = nil else st.since = st.since or t end
   local off = aim_off[kind]
-  if not turning then
-    local dyaw = (wyaw - cyaw + 180) % 360 - 180
-    if not off then
-      off = { dyaw, wpitch - cpitch }
-      aim_off[kind] = off
-    else
-      off[1], off[2] = off[1] + (dyaw - off[1]) * AIM_LEARN, off[2] + (wpitch - cpitch - off[2]) * AIM_LEARN
+  if not off then
+    off = { AIM_OFF[1], AIM_OFF[2] }
+    aim_off[kind] = off
+  end
+  if st.since and t - st.since >= STILL_FOR then
+    local dyaw, dpitch = (wyaw - cyaw + 180) % 360 - 180, wpitch - cpitch
+    if math.abs(dyaw - off[1]) < AIM_ODD and math.abs(dpitch - off[2]) < AIM_ODD then
+      off[1], off[2] = off[1] + (dyaw - off[1]) * AIM_LEARN, off[2] + (dpitch - off[2]) * AIM_LEARN
     end
   end
-  if not off then return nil end
   return { math.rad(wyaw - off[1]), math.rad(wpitch - off[2]) }
 end
 
@@ -835,11 +851,12 @@ local function fly(w, px, py, pz, vx, vy, vz)
   return px + vx * WEAPON_STEP, py + vy * WEAPON_STEP, pz + vz * WEAPON_STEP, vx, vy, vz
 end
 
--- the round's path from where it is START m along the view (the muzzle), until its lifetime, MOST_T or DEEPEST under
--- my feet: points SEG m apart (farther far off)
-local function weapon_path(c, w, start, aim)
+-- the round's path from the muzzle, until its lifetime, MOST_T or DEEPEST under my feet: points SEG m apart (farther
+-- far off). test.4: from the muzzle itself; test.2-3 cut the camera's line where it passed the muzzle's distance, which
+-- hung in the air ahead of the weapon while walking sideways (the weapon swinging off that line)
+local function weapon_path(c, w, muzzle, aim)
   local mx, my = my_move()
-  local px, py, pz, vx, vy, vz = launch(c, w, mx, my, aim)
+  local px, py, pz, vx, vy, vz = launch(c, w, mx, my, aim, muzzle)
   local last = math.min(w[4] or MOST_T, MOST_T)
   local deepest = (feet_z or (c.z - 2)) - DEEPEST
   local pts, to_go = {}, 0       -- to_go: m of flight until the next point
@@ -852,37 +869,26 @@ local function weapon_path(c, w, start, aim)
     local qx, qy, qz
     qx, qy, qz, vx, vy, vz = fly(w, px, py, pz, vx, vy, vz)
     t = t + WEAPON_STEP
-    local sx, sy, sz = px, py, pz            -- this step's part that is drawn
-    if #pts == 0 then
-      local a0 = (px - c.x) * c.fx + (py - c.y) * c.fy + (pz - c.z) * c.fz
-      local a1 = (qx - c.x) * c.fx + (qy - c.y) * c.fy + (qz - c.z) * c.fz
-      if a1 >= start then
-        local f = a1 > a0 and math.max(0, (start - a0) / (a1 - a0)) or 0
-        sx, sy, sz = px + (qx - px) * f, py + (qy - py) * f, pz + (qz - pz) * f
-        put(sx, sy, sz)
-      end
+    if #pts == 0 then put(px, py, pz) end
+    local len = math.sqrt((qx - px) ^ 2 + (qy - py) ^ 2 + (qz - pz) ^ 2)
+    local s = 0
+    while len - s >= to_go and #pts < MOST_POINTS do
+      s = s + to_go
+      local f = s / len
+      put(px + (qx - px) * f, py + (qy - py) * f, pz + (qz - pz) * f)
     end
-    if #pts > 0 then
-      local len = math.sqrt((qx - sx) ^ 2 + (qy - sy) ^ 2 + (qz - sz) ^ 2)
-      local s = 0
-      while len - s >= to_go and #pts < MOST_POINTS do
-        s = s + to_go
-        local f = s / len
-        put(sx + (qx - sx) * f, sy + (qy - sy) * f, sz + (qz - sz) * f)
-      end
-      to_go = to_go - (len - s)
-    end
+    to_go = to_go - (len - s)
     px, py, pz = qx, qy, qz
     if pz < deepest then break end
   end
-  if #pts > 0 then pts[#pts + 1] = { px, py, pz } end
+  pts[#pts + 1] = { px, py, pz }
   return pts
 end
 
--- the weapon to draw for this frame: its row in WEAPONS and where its muzzle is along the view, or nil
+-- the weapon to draw for this frame: its row in WEAPONS and its muzzle, or nil
 local function weapon_aimed(c)
   if not (weapon_arcs and aim_down) then
-    said_weapon, held = nil, nil
+    said_weapon, held, aim_still.since, aim_still.yaw = nil, nil, nil, nil
     return nil
   end
   local kind, u = held_weapon(c)
@@ -893,20 +899,23 @@ local function weapon_aimed(c)
     log('weapon aimed: %s', said)
   end
   if not kind or fp then return nil end
-  return WEAPONS[kind], muzzle_along(c, u), u, kind
+  return WEAPONS[kind], muzzle_of(u), u, kind
 end
 
 -- test.2-3: each shot while a weapon's arc shows, its round is found and, CHECK_AT s after it is first seen, compared
 -- with the arc drawn at the click: how far off across the view, and which way it flew against the camera and the
 -- barrel. The round: of the units new since the click and first seen within 10 m of the camera, the one gone farthest
 -- (test.2 looked only for the probe's five rounds, so the EAT, the GR-8 and the Punisher Plasma went unchecked).
-local CHECK_AT, CHECK_MOST, CHECK_NEW = 0.3, 0.8, 0.15
+-- (in a block of its own: the file is near Lua 5.1's 200 locals)
+local watch_shots, camera_turn
+do
+local CHECK_AT, CHECK_MOST, CHECK_NEW, CHECK_FAR = 0.3, 0.8, 0.15, 20
 local RUNTIME_BUILT = '46cab355bd8d4d37'   -- asking where one is ends the game
 local check = nil                -- the shot being checked
 local was_throw = false
 local cam_was = nil              -- last frame's camera: { t, yaw, pitch }
 
-local function camera_turn(c)
+function camera_turn(c)
   if not (cam_was and now() > cam_was[1]) then return 0, 0 end
   local dyaw = (math.atan2(c.fy, c.fx) - cam_was[2] + math.pi) % (2 * math.pi) - math.pi
   return math.deg(dyaw) / (now() - cam_was[1]), math.deg(camera_pitch(c) - cam_was[3]) / (now() - cam_was[1])
@@ -918,14 +927,14 @@ local function all_units()
   return type(units) == 'table' and units or {}
 end
 
-local function start_check(c, w, u, aim)
+local function start_check(c, w, u, aim, muzzle)
   local mx, my = my_move()
   local turn, nod = camera_turn(c)
   local fx, fy, fz = chef.unit_rotation(u)
   local before = {}
   for _, r in ipairs(all_units()) do before[r] = true end
   check = { at = now(), c = { x = c.x, y = c.y, z = c.z, fx = c.fx, fy = c.fy, fz = c.fz }, w = w, mx = mx, my = my,
-            aim = aim, turn = turn, nod = nod, barrel = type(fx) == 'number' and { fx, fy, fz } or nil,
+            aim = aim, muzzle = muzzle, turn = turn, nod = nod, barrel = type(fx) == 'number' and { fx, fy, fz } or nil,
             before = before, new = {} }
 end
 
@@ -969,16 +978,17 @@ local function follow_check()
     end
     k.round, k.kind, k.first = best[1], best[2], { best[3], best[4], best[5], best[6] }
   end
-  if t - k.first[1] < CHECK_AT then return end
+  -- (a fast round only CHECK_FAR m on: test.3's GR-8 rounds were gone by 0.3 s)
+  if t - k.first[1] < math.min(CHECK_AT, CHECK_FAR / k.w[1]) then return end
   local x, y, z = chef.unit_position(k.round)
   if not (x and chef.unit_alive(k.round)) then
-    log('shot check %s: the round went before %.1f s', k.w[5], CHECK_AT)
+    log('shot check %s: the round went too soon', k.w[5])
     check = nil
     return
   end
   -- the arc's point nearest the round, flown from the click
   local c, w = k.c, k.w
-  local px, py, pz, vx, vy, vz = launch(c, w, k.mx, k.my, k.aim)
+  local px, py, pz, vx, vy, vz = launch(c, w, k.mx, k.my, k.aim, k.muzzle)
   local best, bx, by, bz = math.huge
   for _ = 1, math.floor((t - k.at + 0.3) / WEAPON_STEP) do
     px, py, pz, vx, vy, vz = fly(w, px, py, pz, vx, vy, vz)
@@ -1002,12 +1012,13 @@ local function follow_check()
 end
 
 -- test.2: called every frame with the weapon drawn this frame (or nil)
-local function watch_shots(c, w, u, aim)
+function watch_shots(c, w, u, aim, muzzle)
   local down = throw_down
-  if down and not was_throw and w and u then start_check(c, w, u, aim) end
+  if down and not was_throw and w and u then start_check(c, w, u, aim, muzzle) end
   was_throw = down
   cam_was = { now(), math.atan2(c.fy, c.fx), camera_pitch(c) }
   follow_check()
+end
 end
 
 -- ------------------------------------------------------------------ C4's mode by the crosshair
@@ -1169,7 +1180,7 @@ function M.update(dt)
     local turn, nod = camera_turn(c)
     aim = weapon_aim(c, weapon_kind, weapon_unit, math.sqrt(turn * turn + nod * nod) >= STILL_TURN)
   end
-  watch_shots(c, weapon, weapon_unit, aim)
+  watch_shots(c, weapon, weapon_unit, aim, muzzle)
   if aiming then
     draw_arc(c, false, release_point(c, ball, false))
   elseif c4_aim then
