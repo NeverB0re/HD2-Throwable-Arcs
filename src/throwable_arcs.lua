@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.3'
+local VERSION = '1.0.4-test.1'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -531,7 +531,7 @@ local function read_c4(c)
 end
 
 -- ------------------------------------------------------------------ drawing
-local COLOR = { 255, 255, 255 }
+local COLOR = { 0, 255, 0 }      -- test.1: green (which colour channels does the "blue arc" lose?)
 -- The arc is 3 lines a render pixel apart, 3 render pixels wide, at any render scale. The render scale: the game's
 -- settings file's render resolution over the screen's height, read every SCALE_EVERY s. Its far part can come out
 -- faint blue in thick air (a sandstorm, 1.0.3-test.3; at native scale and with anti-aliasing off alike): the game's
