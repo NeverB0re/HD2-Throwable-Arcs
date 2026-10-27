@@ -735,7 +735,7 @@ class ArcTest(unittest.TestCase):
         self.assertAlmostEqual(float(m.group(2)), 0.15, delta=0.02)
 
     def test_walking_forward_throws_farther(self):
-        # the throw is faster by my speed along the aim (camera along +x, up to 3 m/s), none across
+        # the throw is faster by my speed along the aim (1.4 times it, up to 3 m/s; camera along +x), none across
         def reach():
             ls = self.lines()
             xs = [v for l in ls for v in (l[0], l[3])]
