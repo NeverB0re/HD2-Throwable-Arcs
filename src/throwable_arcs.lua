@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.5'
+local VERSION = '1.1.0-test.6'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -907,7 +907,7 @@ end
 -- barrel. The round: of the units new since the click and first seen within 10 m of the camera, the one gone farthest
 -- (test.2 looked only for the probe's five rounds, so the EAT, the GR-8 and the Punisher Plasma went unchecked).
 -- (in a block of its own: the file is near Lua 5.1's 200 locals)
-local watch_shots, camera_turn, watch_c4
+local watch_shots, camera_turn, watch_c4, lab_hook
 do
 local CHECK_AT, CHECK_MOST, CHECK_NEW, CHECK_FAR = 0.3, 0.8, 0.15, 20
 local RUNTIME_BUILT = '46cab355bd8d4d37'   -- asking where one is ends the game
@@ -926,6 +926,229 @@ local function all_units()
   local units = w and chef.call('World.units', w)
   return type(units) == 'table' and units or {}
 end
+
+-- test.6 lab (test only): flights of what is fired or thrown, logged every FLIGHT_EVERY s for FLIGHT_MOST s, to fit
+-- the rounds not measured yet and grenades; grenades: what the network and my hand show when one is drawn (key 4) or
+-- thrown (G); weapons in my hand not in WEAPONS, by kind.
+-- (in a function of its own: Lua 5.1 allows a function 200 locals, and the file is near that)
+local record
+lab_hook, record = (function()
+local FLIGHT_EVERY, FLIGHT_MOST, CATCH_FOR = 0.05, 4, 2
+local flights, flight_n, catches = {}, 0, {}
+
+local function record(u, what, c)
+  flight_n = flight_n + 1
+  local mx, my, mz = my_move()
+  flights[#flights + 1] = { u = u, id = flight_n, t0 = now(), next = 0 }
+  log('flight %d: %s, kind %s; camera %.2f %.2f %.2f fwd %.4f %.4f %.4f; feet %s; moving %.2f %.2f %.2f; pose %s',
+      flight_n, what, tostring(chef.unit_kind(u)), c.x, c.y, c.z, c.fx, c.fy, c.fz,
+      me and string.format('%.2f %.2f %.2f', me[1], me[2], me[3]) or 'nil', mx, my, mz, tostring(hand_pose()))
+end
+
+local function follow_flights()
+  local t, keep = now(), {}
+  for _, f in ipairs(flights) do
+    local x, y, z
+    if chef.unit_alive(f.u) then x, y, z = chef.unit_position(f.u) end
+    if x and t - f.t0 < FLIGHT_MOST then
+      keep[#keep + 1] = f
+      if t >= f.next then
+        f.next = t + FLIGHT_EVERY
+        log('flight %d %.3f %.2f %.2f %.2f', f.id, t - f.t0, x, y, z)
+      end
+    else
+      log('flight %d: ended at %.2f s', f.id, t - f.t0)
+    end
+  end
+  flights = keep
+end
+
+-- what turns up near me in CATCH_FOR s: each new unit within 10 m that then moves, its flight recorded
+local function start_catch(what, c)
+  local k = { what = what, at = now(), c = c, before = {}, new = {} }
+  for _, r in ipairs(all_units()) do k.before[r] = true end
+  catches[#catches + 1] = k
+  log('catch: %s', what)
+end
+
+local function follow_catches(c)
+  local t, keep = now(), {}
+  for _, k in ipairs(catches) do
+    if t - k.at < CATCH_FOR then
+      keep[#keep + 1] = k
+      for _, r in ipairs(all_units()) do
+        if not k.before[r] then
+          k.before[r] = true
+          local kind = chef.unit_alive(r) and chef.unit_kind(r)
+          if kind and kind ~= RUNTIME_BUILT then
+            local x, y, z = chef.unit_position(r)
+            if x and me and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 + (z - me[3]) ^ 2 < 100 then
+              k.new[#k.new + 1] = { r, x, y, z }
+            end
+          end
+        end
+      end
+      for i = #k.new, 1, -1 do
+        local n = k.new[i]
+        local x, y, z = chef.unit_position(n[1])
+        if x and (x - n[2]) ^ 2 + (y - n[3]) ^ 2 + (z - n[4]) ^ 2 > 1 then
+          record(n[1], k.what, c)
+          table.remove(k.new, i)
+        end
+      end
+    end
+  end
+  catches = keep
+end
+
+-- grenades: the Helldiver's network object (NarrowHUD's data: the player type and its avatar field, the avatar type),
+-- its declared fields (Network.object_info) logged once, and their values at each grenade event when the info names
+-- them (a field is only ever read by a name the game declares for that type: reading another can end the game)
+local PLAYER_TYPE, PLAYER_AVATAR, AVATAR_TYPE, NO_OBJECT = 'un6y1d', 'u4d1h9a', 'vvhx8ga', 32767
+local avatar_info, avatar_said = nil, {}
+local function my_avatar(gs)
+  local peer = chef.call_kind('Network.peer_id', 'lab peer')
+  local mine = peer and chef.call_kind('GameSession.objects_owned_by', 'lab owned', gs, peer)
+  if type(mine) ~= 'table' then return nil end
+  for _, goid in pairs(mine) do
+    if chef.call_kind('GameSession.game_object_exists', 'lab exists', gs, goid) == true
+       and chef.call_kind('GameSession.game_object_is_type', 'lab player', gs, goid, PLAYER_TYPE) == true then
+      local a = chef.call_kind('GameSession.game_object_field', 'lab avatar', gs, goid, PLAYER_AVATAR)
+      if type(a) == 'number' and a ~= NO_OBJECT
+         and chef.call_kind('GameSession.game_object_exists', 'lab exists', gs, a) == true
+         and chef.call_kind('GameSession.game_object_is_type', 'lab avatar type', gs, a, AVATAR_TYPE) == true then
+        return a, #mine
+      end
+    end
+  end
+  return nil, #mine
+end
+
+local function show(v)
+  if type(v) == 'table' then
+    local parts = {}
+    for key, x in pairs(v) do parts[#parts + 1] = tostring(key) .. '=' .. tostring(x) end
+    table.sort(parts)
+    return '{' .. table.concat(parts, ' ') .. '}'
+  end
+  return tostring(v)
+end
+
+local function grenade_event(what)
+  local gs = chef.call_kind('Network.game_session', 'lab session')
+  if not gs then log('grenade %s: no game session', what) return end
+  local avatar, owned = my_avatar(gs)
+  log('grenade %s: hand pose %s, my objects %s, my Helldiver object %s', what, tostring(hand_pose()), tostring(owned),
+      tostring(avatar))
+  if not avatar then return end
+  if avatar_info == nil then
+    local ok, info = pcall(chef.call_kind, 'Network.object_info', 'lab objinfo', AVATAR_TYPE)
+    avatar_info = (ok and type(info) == 'table' and type(info.fields) == 'table') and info.fields or false
+    log('grenade: the Helldiver type declares %s fields; the first: %s', avatar_info and #avatar_info or 'no',
+        avatar_info and show(avatar_info[1]) or show(info))
+  end
+  if not avatar_info then return end
+  local parts = {}
+  for i, f in ipairs(avatar_info) do
+    local name = type(f) == 'table' and f.name
+    if type(name) == 'string' then
+      local v = chef.call_kind('GameSession.game_object_field', 'lab field', gs, avatar, name)
+      local text = show(v)
+      if avatar_said[name] ~= text then parts[#parts + 1] = name .. '=' .. text end
+      avatar_said[name] = text
+    elseif i == 1 then
+      log('grenade: the field info has no names; not read')
+      break
+    end
+  end
+  if #parts > 0 then log('grenade %s: Helldiver fields changed: %s', what, table.concat(parts, ' ')) end
+end
+
+-- the units on me (within 1.5 m across, 2.5 m up): their kinds, to tell what a pose brings into my hand
+local on_me_said = nil
+local function units_on_me(why)
+  if not me then return end
+  local kinds = {}
+  for _, u in ipairs(all_units()) do
+    local kind = chef.unit_alive(u) and chef.unit_kind(u)
+    if kind and kind ~= RUNTIME_BUILT and kind ~= PLAYER then
+      local x, y, z = chef.unit_position(u)
+      if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 < 2.25 and z > me[3] - 0.5 and z < me[3] + 2.5 then kinds[kind] = true end
+    end
+  end
+  local now_set = {}
+  for kind in pairs(kinds) do now_set[#now_set + 1] = kind end
+  table.sort(now_set)
+  if on_me_said then
+    local was, came, went = {}, {}, {}
+    for _, kind in ipairs(on_me_said) do was[kind] = true end
+    for _, kind in ipairs(now_set) do if not was[kind] then came[#came + 1] = kind end end
+    for _, kind in ipairs(on_me_said) do if not kinds[kind] then went[#went + 1] = kind end end
+    log('on me at %s: came %s; went %s', why, table.concat(came, ' '), table.concat(went, ' '))
+  else
+    log('on me at %s: %s', why, table.concat(now_set, ' '))
+  end
+  on_me_said = now_set
+end
+
+-- a weapon in my hand that isn't in WEAPONS: the unit near me that points the way the camera looks
+local unknown_said, unknown_next = {}, 0
+local function unknown_weapon(c)
+  if not me or now() < unknown_next then return end
+  unknown_next = now() + 1
+  for _, u in ipairs(all_units()) do
+    local kind = chef.unit_alive(u) and chef.unit_kind(u)
+    if kind and kind ~= RUNTIME_BUILT and kind ~= PLAYER and not WEAPONS[kind] then
+      local x, y = chef.unit_position(u)
+      if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 < 2.25 then
+        local fx, fy, fz = chef.unit_rotation(u)
+        if type(fx) == 'number' and fx * c.fx + fy * c.fy + fz * c.fz >= HELD_ALONG then
+          if not unknown_said[kind] then
+            unknown_said[kind] = true
+            log('unknown weapon aimed: kind %s', kind)
+          end
+          return kind
+        end
+      end
+    end
+  end
+end
+
+local lab_keys, lab_pose, lab_left, lab_unknown = {}, nil, false, nil
+local function lab(c, weapon_drawn)
+  for _, key in ipairs({ '4', 'g' }) do
+    local d = chef.key_down(key) == true
+    if d and not lab_keys[key] then
+      grenade_event('key ' .. key)
+      if key == 'g' then start_catch('grenade (G)', c) end
+    end
+    lab_keys[key] = d
+  end
+  local pose = hand_pose()
+  if pose ~= lab_pose then
+    if pose == 40 or pose == 41 or lab_pose == 40 or lab_pose == 41 then units_on_me('pose ' .. tostring(pose)) end
+    if pose == 40 or pose == 41 then grenade_event('pose ' .. pose) end
+    lab_pose = pose
+  end
+  local left = throw_down
+  if left and not lab_left then
+    if (pose == 40 or pose == 41) and not ball then
+      start_catch('grenade (thrown from the hand)', c)
+    elseif aim_down and not weapon_drawn and lab_unknown then
+      start_catch('shot of unknown weapon ' .. lab_unknown, c)
+    end
+  end
+  lab_left = left
+  if aim_down and not weapon_drawn and pose ~= 40 and pose ~= 41 and pose ~= C4_GRIP then
+    lab_unknown = unknown_weapon(c) or lab_unknown
+  elseif not aim_down then
+    lab_unknown = nil
+  end
+  follow_catches(c)
+  follow_flights()
+end
+return lab, record
+end)()
 
 local function start_check(c, w, u, aim, muzzle)
   local mx, my = my_move()
@@ -977,6 +1200,7 @@ local function follow_check()
       return
     end
     k.round, k.kind, k.first = best[1], best[2], { best[3], best[4], best[5], best[6] }
+    record(k.round, 'shot ' .. k.w[5], k.c)
   end
   -- (a fast round only CHECK_FAR m on: test.3's GR-8 rounds were gone by 0.3 s)
   if t - k.first[1] < math.min(CHECK_AT, CHECK_FAR / k.w[1]) then return end
@@ -1050,7 +1274,10 @@ function watch_c4(c, h)
     for _, r in ipairs(all_units()) do
       if not k.before[r] then
         k.before[r] = true
-        if chef.unit_alive(r) and chef.unit_kind(r) == C4_CHARGE then k.charge, k.first = r, t end
+        if chef.unit_alive(r) and chef.unit_kind(r) == C4_CHARGE then
+          k.charge, k.first = r, t
+          record(r, 'c4', c)
+        end
       end
     end
     return
@@ -1238,6 +1465,7 @@ function M.update(dt)
   end
   watch_shots(c, weapon, weapon_unit, aim, muzzle)
   watch_c4(c, h)
+  lab_hook(c, weapon ~= nil)
   if aiming then
     draw_arc(c, false, release_point(c, ball, false))
   elseif c4_aim then

@@ -351,6 +351,57 @@ class ArcTest(unittest.TestCase):
         self.assertRegex(self.logs(), r"c4 check: moving 0\.0 ahead 0\.0 right; at \d+ m the charge is 0\.(2[6-9]|3[0-4]) m right "
                                       r"-?0\.0\d m up of the arc")
 
+    # ------------------------------------------------------------------ test.6 lab
+    def test_a_thrown_grenade_is_recorded(self):
+        self.fake["down"]["g"] = True
+        self.frames(2)
+        nade = self.add_unit("5c14f27759dd3be0", 0.3, -0.3, 1.5)
+        self.lua.eval("function(f, n) f.nade_fly = function() n.x = n.x + 0.35 end end")(self.fake, nade)
+        for _ in range(10):
+            self.fake.nade_fly()
+            self.frames(1)
+        logs = self.logs()
+        self.assertIn("grenade key g: no game session", logs)
+        self.assertIn("flight 1: grenade (G), kind 5c14f27759dd3be0", logs)
+        self.assertRegex(logs, r"flight 1 0\.\d+ \d+\.\d\d -0\.30 1\.50")
+
+    def test_grenade_fields_are_read_by_their_declared_names(self):
+        self.lua.eval("""function(f)
+          f.E['Network.game_session'] = function() return 'gs' end
+          f.E['Network.peer_id'] = function() return 'me' end
+          f.E['GameSession.objects_owned_by'] = function() return { 11, 12 } end
+          f.E['GameSession.game_object_exists'] = function(gs, g) return true end
+          f.E['GameSession.game_object_is_type'] = function(gs, g, t) return (g == 11 and t == 'un6y1d') or (g == 7 and t == 'vvhx8ga') end
+          f.E['GameSession.game_object_field'] = function(gs, g, name)
+            if g == 11 and name == 'u4d1h9a' then return 7 end
+            if g == 7 and name == 'du7kbt' then return f.nades end
+            if g == 7 and name == 'xx1' then return 3 end
+            error('NATIVE CRASH: an undeclared field')
+          end
+          f.E['Network.object_info'] = function(t) return { fields = { { id = 'a1', name = 'du7kbt' }, { id = 'b2', name = 'xx1' } } } end
+          f.nades = 4
+        end""")(self.fake)
+        self.fake["down"]["4"] = True
+        self.frames(2)
+        self.fake["down"]["4"] = False
+        self.fake.nades = 3
+        self.frames(2)
+        self.fake["down"]["4"] = True
+        self.frames(2)
+        logs = self.logs()
+        self.assertIn("grenade key 4: hand pose nil, my objects 2, my Helldiver object 7", logs)
+        self.assertIn("the Helldiver type declares 2 fields", logs)
+        self.assertIn("Helldiver fields changed: du7kbt=4 xx1=3", logs)
+        self.assertIn("Helldiver fields changed: du7kbt=3", logs)
+        self.assertNotIn("NATIVE CRASH", logs)
+
+    def test_an_unknown_weapon_aimed_is_named(self):
+        self.weapon_in_hand("abcdefabcdefabcd")
+        self.fake["mouse"]["right"] = True
+        self.frames(3)
+        self.assertIn("unknown weapon aimed: kind abcdefabcdefabcd", self.logs())
+        self.assertEqual(self.lines(), [])
+
     def plug_pad(self):
         """a controller on Pad1: buttons a, left_trigger, right_trigger; fake.pad holds each button's value"""
         self.lua.eval("""function(f)
