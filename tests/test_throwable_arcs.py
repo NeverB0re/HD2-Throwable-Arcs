@@ -718,6 +718,22 @@ class ArcTest(unittest.TestCase):
         self.assertAlmostEqual(float(m.group(6)), 9.81, delta=0.3)
         self.assertRegex(self.logs(), r"held the arc 0\.\d\d s")
 
+    def test_a_c4_throw_is_measured(self):
+        # test builds: the charge, listed only once it flies, is fitted from 0.15 s after the press
+        det = self.c4_in_hand()
+        self.fake["mouse"]["right"] = True
+        self.frames(5)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(2)
+        self.fake["mouse"]["left"] = True
+        self.frames(2)
+        self.fake.throw("9b75217d8312dd67", 22, 25, 9.81)
+        self.frames(200)
+        m = re.search(r"throw \(c4\): moving .*flew ([-\d.]+) fwd .*held the arc ([\d.]+) s", self.logs())
+        self.assertTrue(m, self.logs())
+        self.assertAlmostEqual(float(m.group(1)), 22 * math.cos(math.radians(25)), delta=0.3)
+        self.assertAlmostEqual(float(m.group(2)), 0.15, delta=0.02)
+
     def test_walking_forward_throws_farther(self):
         # the arc carries 0.58 of my speed along the aim (camera along +x), none across
         def reach():

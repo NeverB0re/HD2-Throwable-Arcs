@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.3-test.4'
+local VERSION = '1.0.3-test.5'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -798,6 +798,8 @@ on_settings = function()
 end
 local measuring = nil            -- { c4, cam, pitch, move, drawn, start, release, unit, samples }
 
+local C4_CHARGE = '9b75217d8312dd67'
+local charge_watch = chef.watch and chef.watch({ [C4_CHARGE] = true }, 0.5)
 local said_pose, pose_next = false, 0
 on_frame = function(c)
   local t = now()
@@ -810,6 +812,17 @@ on_frame = function(c)
     end
   end
   local m = measuring
+  if m and m.wait_c4 then            -- C4: the new charge, listed some time after it left the hand
+    charge_watch.refresh()
+    for _, it in ipairs(charge_watch.items) do
+      if not m.before[it.unit] and chef.unit_alive(it.unit) then m.unit, m.wait_c4 = it.unit, nil end
+    end
+    if m.wait_c4 and t - m.release > 1.5 then
+      log('throw (c4): no new charge seen in 1.5 s')
+      measuring = nil
+    end
+    return
+  end
   if not (m and m.unit) then return end
   if not chef.unit_alive(m.unit) or t - m.release > 2.5 then
     measuring = nil
@@ -870,12 +883,15 @@ on_hold = function(c, h, what, flying)
     local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
     local vx, vy, vz = throw_velocity(c, h.c4)
     measuring = { c4 = h.c4, cam = { c.fx / fh, c.fy / fh }, pitch = camera_pitch(c), move = move,
-                  drawn = { vx, vy, vz }, start = now(), samples = {} }
+                  drawn = { vx, vy, vz }, start = now(), samples = {}, before = {} }
+    if h.c4 and charge_watch then
+      for _, it in ipairs(charge_watch.items) do measuring.before[it.unit] = true end
+    end
   elseif measuring and not measuring.unit then
     if flying then
       measuring.unit, measuring.release = flying, now()
-    elseif h.c4 then
-      measuring = nil
+    elseif h.c4 and charge_watch then  -- fitted from where it left the hand, C4_HOLD s after the press
+      measuring.release, measuring.wait_c4 = h.at + C4_HOLD, true
     else
       log('throw (%s): nothing seen leaving the hand in %.1f s', h.c4 and 'c4' or 'stratagem', HOLD_MOST)
       measuring = nil
@@ -921,6 +937,7 @@ function M.shutdown()
   if det_watch then det_watch.stop() end
   if vehicle_watch then vehicle_watch.stop() end
   if ball_watch then ball_watch.stop() end
+  if charge_watch then charge_watch.stop() end
 end
 
 return M
