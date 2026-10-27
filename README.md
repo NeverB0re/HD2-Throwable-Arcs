@@ -4,8 +4,8 @@
 
 A **HELLDIVERS 2** mod that draws where your throw will fly while you aim it:
 
-- **Stratagem balls:** once the code is in and you hold the throw (left mouse) or aim it (right mouse), a white dashed
-  arc shows the flight.
+- **Stratagem balls:** once the code is in and you hold the throw (left mouse) or aim it (right mouse), a dashed arc
+  shows the flight (green by default; white, blue or red in the options menu).
 - **C4:** while you aim it with right mouse in DEPLOY mode, the same arc shows where the charge goes: standing,
   crouched, prone, sliding, diving, and from a vehicle's passenger seats.
 - **C4 mode icon:** while C4 is in your hand, the game's DEPLOY or DETONATE icon sits beside the crosshair, so you
@@ -21,9 +21,12 @@ sideways), and the arc with it.
 **Render Scale below native:** with the game's Anti-Aliasing off, the game clips 3D drawing to a corner of the
 screen, and the arc with it. Turn Anti-Aliasing on (any quality) and the arc shows whole.
 
-**Faint blue arc:** on some maps part of the arc can look faint blue. It seems to come from the map's effects (it isn't
-anti-aliasing), but the exact cause is unknown and it is hard to reproduce: if you find what causes it, please open an
-issue.
+**Controller:** the right trigger throws and the left trigger aims (the game's default layout). Buttons or keys
+rebound in the game's settings aren't followed: the mod reads the mouse buttons and the triggers themselves.
+
+**Arc changing colour:** at some places and headings, part of a white arc could look faint blue (sometimes red or
+green). It isn't anti-aliasing or the map's fog, and the exact cause is unknown. The arc is green by default since
+1.0.4, which seems to keep its colour; if you find what causes it, please open an issue.
 
 Grenades and guns aren't drawn. Grenades are held like stratagem balls and appear only once they leave the hand, so
 which one you hold can't be told before the throw; a gun's bullet speed and drop can't be read. Neither is possible for

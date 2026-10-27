@@ -64,7 +64,10 @@ chef = {
   key_pressed = function(k) return fake.pressed[k] == true end,
   mouse_down = function(b) return fake.mouse[b] == true end,
   wheel = function() return fake.wheel end,
-  line = function(x1, y1, z1, x2, y2, z2, c) fake.lines[#fake.lines + 1] = { x1, y1, z1, x2, y2, z2 } end,
+  line = function(x1, y1, z1, x2, y2, z2, c)
+    fake.lines[#fake.lines + 1] = { x1, y1, z1, x2, y2, z2 }
+    fake.line_color = c
+  end,
   color = function(r, g, b, a) return { r, g, b, a } end,
   screen = function() return 1920, 1200 end,
   lights = function() return 0 end,
@@ -330,6 +333,48 @@ class ArcTest(unittest.TestCase):
         self.assertEqual([l[2] for l in self.lines()], [-10000])
         self.frames(1)
         self.assertEqual(self.lines(), [])
+
+    def plug_pad(self):
+        """a controller on Pad1: buttons a, left_trigger, right_trigger; fake.pad holds each button's value"""
+        self.lua.eval("""function(f)
+          f.pad = { 0, 0, 0 }
+          f.E['Pad1.active'] = function() return true end
+          f.E['Pad1.num_buttons'] = function() return 3 end
+          f.E['Pad1.button_name'] = function(i) return ({ [0] = 'a', 'left_trigger', 'right_trigger' })[i] end
+          f.E['Pad1.button'] = function(i) return f.pad[i + 1] end
+        end""")(self.fake)
+
+    def test_c4_aimed_and_thrown_with_a_controller(self):
+        # 1.0.4: the left trigger aims, the right trigger throws (the game's default controller layout)
+        self.plug_pad()
+        det = self.c4_in_hand()
+        self.fake["pad"][2] = 1                      # left trigger
+        self.frames(5)
+        self.lua.eval("function(u) u.x = 0.42 end")(det)
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+        self.assertIn("controller: Pad1, triggers found", self.logs())
+        self.fake["pad"][3] = 1                      # right trigger: thrown, kept while it leaves the hand
+        self.frames(3)
+        self.assertGreater(len(self.lines()), 20)
+        self.frames(8)
+        self.assertEqual([l[2] for l in self.lines()], [-10000])
+
+    def test_a_pad_without_triggers_is_logged(self):
+        self.lua.eval("""function(f)
+          f.E['Pad1.connected'] = function() return true end
+          f.E['Pad1.num_buttons'] = function() return 1 end
+          f.E['Pad1.button_name'] = function(i) return 'a' end
+        end""")(self.fake)
+        self.frames(2)
+        self.assertIn("controller: Pad1, no triggers among: a", self.logs())
+
+    def test_the_arc_colour_is_an_option(self):
+        self.aim(10)
+        self.assertEqual(list(self.fake.line_color.values()), [0, 255, 0, 255])     # green by default
+        self.fake.changes["arc_color"](4)                                        # red
+        self.frames(1)
+        self.assertEqual(list(self.fake.line_color.values()), [255, 70, 70, 255])
 
     def c4_object(self, options, owner_host=False):
         """C4's network object (NarrowHUD's names): mine, or the host's with me in its owner field."""

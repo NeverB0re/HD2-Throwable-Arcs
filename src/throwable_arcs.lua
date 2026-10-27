@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.4-test.1'
+local VERSION = '1.0.4'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -184,6 +184,58 @@ local function find_armour()
   end
 end
 
+-- ------------------------------------------------------------------ the buttons
+-- The throw and the aim are the mouse's left and right buttons, and (1.0.4) a controller's right and left triggers: the
+-- game's default layouts. Buttons rebound in the game aren't followed (they are buttons to the mod, not the game's
+-- actions). The controller: the first of the engine's Pad1 to Pad8 that is active or connected, as Chef Shared Loader
+-- finds its menu's, looked at again every PAD_LOOK s; its triggers by the names it lists itself. Only its number and
+-- button indexes are kept between frames. Not tried on a real controller before 1.0.4's release.
+local PAD_LOOK = 1
+local PAD_THROW, PAD_AIM = { 'right_trigger', 'r2' }, { 'left_trigger', 'l2' }
+local pad = { n = nil, button = nil, throw = nil, aim = nil, next = 0, said = nil }
+local throw_down, aim_down = false, false      -- this frame's
+
+local function find_pad()
+  if pad.n then
+    local p = 'Pad' .. pad.n
+    if chef.call(p .. '.active') == true or chef.call(p .. '.connected') == true then return end
+    pad.n, pad.button, pad.throw, pad.aim = nil, nil, nil, nil
+  end
+  for n = 1, 8 do
+    local p = 'Pad' .. n
+    if chef.call(p .. '.active') == true or chef.call(p .. '.connected') == true then
+      local count, by, names = chef.call(p .. '.num_buttons'), {}, {}
+      if type(count) == 'number' and count > 0 and count <= 64 then
+        for i = 0, count - 1 do
+          local nm = chef.call(p .. '.button_name', i)
+          if type(nm) == 'string' and nm ~= '' then by[nm:lower()] = i; names[#names + 1] = nm:lower() end
+        end
+      end
+      local function first(list) for _, nm in ipairs(list) do if by[nm] then return by[nm] end end end
+      pad.n, pad.button, pad.throw, pad.aim = n, p .. '.button', first(PAD_THROW), first(PAD_AIM)
+      local said = p .. (pad.throw and pad.aim and ', triggers found'
+                         or ', no triggers among: ' .. table.concat(names, ' '))
+      if said ~= pad.said then pad.said = said; log('controller: %s', said) end
+      return
+    end
+  end
+end
+
+local function pad_down(i)
+  if not (pad.button and i) then return false end
+  local v = chef.call(pad.button, i)
+  return type(v) == 'number' and v > 0.5
+end
+
+local function read_buttons()
+  if now() >= pad.next then
+    pad.next = now() + PAD_LOOK
+    find_pad()
+  end
+  throw_down = chef.mouse_down('left') == true or pad_down(pad.throw)
+  aim_down = chef.mouse_down('right') == true or pad_down(pad.aim)
+end
+
 -- ------------------------------------------------------------------ aiming
 -- The balls come from a watch on their kind, always on: the loader asks the engine for that kind only, about 0.1 ms
 -- every 0.5 s (test.13-17 ran it only after the stratagem key, which players who moved that key had to set in the
@@ -288,8 +340,8 @@ end
 
 local function read_input(c)
   local t = now()
-  local left = chef.mouse_down('left') == true
-  local down = left or chef.mouse_down('right') == true
+  local left = throw_down
+  local down = left or aim_down
   if not left then watch_pose(c) end
   if down and not was_hold then
     held_since, looking = t, true
@@ -489,7 +541,7 @@ local function hand_pose()
 end
 
 local function read_c4(c)
-  local right, left = chef.mouse_down('right') == true, chef.mouse_down('left') == true
+  local right, left = aim_down, throw_down
   if right and not was_right then
     c4_least, c4_low = nil, nil
     if det_watch then det_watch.refresh() end
@@ -531,11 +583,14 @@ local function read_c4(c)
 end
 
 -- ------------------------------------------------------------------ drawing
-local COLOR = { 0, 255, 0 }      -- test.1: green (which colour channels does the "blue arc" lose?)
+-- The arc's colour, an option: green (the default from 1.0.4; 1.0.4-test.1 saw it keep its colour where white turned
+-- faint blue, red or green), white (until 1.0.3), blue or red.
+local COLORS = { { 0, 255, 0 }, { 255, 255, 255 }, { 80, 160, 255 }, { 255, 70, 70 } }
+local arc_color = 1
 -- The arc is 3 lines a render pixel apart, 3 render pixels wide, at any render scale. The render scale: the game's
--- settings file's render resolution over the screen's height, read every SCALE_EVERY s. Its far part can come out
--- faint blue in thick air (a sandstorm, 1.0.3-test.3; at native scale and with anti-aliasing off alike): the game's
--- fog on its lines, which a mod's line can't turn off.
+-- settings file's render resolution over the screen's height, read every SCALE_EVERY s. A white arc came out faint
+-- blue, red or green in parts, at some places and headings only, on any map, at native scale and with anti-aliasing
+-- off alike (1.0.3-test.3 and after); the cause is unknown.
 local SCALE_EVERY = 2
 local render_scale, scale_next = 1, 0
 -- the arc is dashed by flight time: DASH segments drawn, GAP left out (about 1.3 m and 0.7 m). test.10-11 measured
@@ -626,7 +681,8 @@ local function draw_arc(c, c4, ox, oy, oz)
   end
   local px_angle = (tonumber(c.fov) or 0.96) / math.max(1, sh or 1080)
   local offsets = { -1 / render_scale, 0, 1 / render_scale }
-  world_strip(c, path(c, c4, ox, oy, oz), chef.color(COLOR[1], COLOR[2], COLOR[3], 255), px_angle, offsets)
+  local col = COLORS[arc_color] or COLORS[1]
+  world_strip(c, path(c, c4, ox, oy, oz), chef.color(col[1], col[2], col[3], 255), px_angle, offsets)
   drew = true
 end
 
@@ -657,6 +713,9 @@ end
 local show_icon = true
 if chef.has and chef.has('menu') then
   chef.title('Stratagem and C4 Trajectory')
+  arc_color = chef.option('arc_color', { type = 'choice', label = 'Arc colour',
+                                         choices = { 'Green', 'White', 'Blue', 'Red' }, default = 1 })
+  chef.on_change('arc_color', function(v) arc_color = v end)
   show_icon = chef.option('c4_icon', { type = 'toggle', label = 'C4 mode icon by the crosshair', default = true }) ~= false
   chef.on_change('c4_icon', function(v) show_icon = v ~= false end)
 end
@@ -780,6 +839,7 @@ function M.update(dt)
   end
   update_feet(c)
   update_trail()
+  read_buttons()
   read_input(c)
   read_c4(c)
   c4_icon(c)
