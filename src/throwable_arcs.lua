@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.4'
+local VERSION = '1.1.0-test.1'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -671,7 +671,7 @@ end
 
 local drew = false
 
-local function draw_arc(c, c4, ox, oy, oz)
+local function draw_points(c, pts)
   local _, sh = chef.screen()
   if now() >= scale_next and chef.setting then
     scale_next = now() + SCALE_EVERY
@@ -682,9 +682,11 @@ local function draw_arc(c, c4, ox, oy, oz)
   local px_angle = (tonumber(c.fov) or 0.96) / math.max(1, sh or 1080)
   local offsets = { -1 / render_scale, 0, 1 / render_scale }
   local col = COLORS[arc_color] or COLORS[1]
-  world_strip(c, path(c, c4, ox, oy, oz), chef.color(col[1], col[2], col[3], 255), px_angle, offsets)
+  world_strip(c, pts, chef.color(col[1], col[2], col[3], 255), px_angle, offsets)
   drew = true
 end
+
+local function draw_arc(c, c4, ox, oy, oz) draw_points(c, path(c, c4, ox, oy, oz)) end
 
 -- a line object keeps what it was last given until it is reset, and the loader resets it only when a line is drawn:
 -- after the arc, one empty line far below the map clears it
@@ -692,6 +694,113 @@ local function clear_arc()
   if not drew then return end
   drew = false
   chef.line(0, 0, -10000, 0, 0, -10000, chef.color(0, 0, 0, 0))
+end
+
+-- ------------------------------------------------------------------ weapons
+-- 1.1.0: while a weapon whose round falls is aimed, in third person, the round's path. Measured with Weapon Probe 0.1.0
+-- (27 tracked rounds of five weapons, WEAPON_ARCS_PLAN.md): the round flies the way the camera looks, WEAPON_LIFT above
+-- it, from WEAPON_FROM (m ahead, right and up of the camera), at the weapon's speed plus my velocity; gravity times the
+-- weapon's factor, and drag a = -WEAPON_K * drag * caliber^2 / mass * |v| * v, one K for every weapon (fitted per
+-- weapon 4.6-4.8e-4; air's 1/2 rho pi/4 in the wiki's units is 4.81e-4). Within 0.73 m RMS of the rounds over 150 m.
+-- The weapon in hand: while aiming, the one weapon unit near me that points the way the camera looks (held ones
+-- 0.998 and more, worn ones 0.8 and less; hand poses don't tell, the CB-9 and the Ultimatum share one). Not drawn in
+-- first person, the camera less than FIRST_PERSON m behind my feet (third person: 0.8-2.1 m).
+local WEAPON_K, WEAPON_LIFT, WEAPON_FROM = 4.7e-4, math.rad(0.6), { 1.3, -0.18, -0.35 }
+local WEAPON_STEP = 1 / 120      -- s per step of the flight
+local FIRST_PERSON = 0.6
+local HELD_ALONG, HELD_NEAR = 0.99, 2.5
+-- weapon unit kind -> { speed m/s, gravity factor, drag * caliber^2 / mass, lifetime s or false, name }. From the
+-- Helldivers wiki's data (game 1.007.201); measured ones say so. Kinds named from filediver's hash list.
+local WEAPONS = {
+  ['02eecd0b1fa49630'] = { 100, 1, 38.4, false, 'GL-21 Grenade Launcher' },             -- measured
+  ['fe3b29b2cfa63f9b'] = { 100, 1, 38.4, false, 'GL-52 De-Escalator' },                 -- measured (the GL-21's round)
+  ['88c2d09ad85a7c9f'] = { 100, 1, 38.4, false, 'GL-28 Belt-Fed Grenade Launcher' },
+  ['006e44327bb953fe'] = { 100, 1, 38.4, false, 'pump grenade launcher (GL-15 Evictor?)' },
+  ['52e4334e6a128caf'] = { 100, 1, 38.4, false, 'GP-31 Grenade Pistol' },
+  ['9eb160830321bfd6'] = { 20, 1, 6.4, false, 'GP-20 Ultimatum' },                      -- measured
+  ['e91f569c2ad8af01'] = { 100, 1, 0, false, 'P-34 Breacher' },   -- measured: 100 m/s, flies 7 s+ (wiki: 150, 1.7 s)
+  ['f49227a0630a3f7f'] = { 100, 0.5, 2.25, false, 'CB-9 Exploding Crossbow' },           -- measured
+  ['05d8d8c073b9d502'] = { 90, 3, 16, false, 'SG-8P Punisher Plasma' },
+  ['26e40437ea275296'] = { 250, 1, 0.657, 1.5, 'RL-77 Airburst Rocket Launcher' },       -- measured (bursts at 1.5 s)
+  ['9f80d67a12a7e40f'] = { 250, 1, 0.657, false, 'GR-8 Recoilless Rifle' },
+  ['80932fa0ed6901d3'] = { 200, 1, 0, false, 'EAT-17 Expendable Anti-Tank' },
+  ['b2b5e0d185605f9e'] = { 200, 1, 0, false, 'EAT-700 Expendable Napalm' },
+  ['7617642765ac38c7'] = { 50, 1, 6.4, false, 'expendable massive rocket launcher (EAT-411 Leveller?)' },
+}
+local weapon_kinds = {}
+for kind in pairs(WEAPONS) do weapon_kinds[kind] = true end
+local weapon_watch = chef.watch and chef.watch(weapon_kinds, 0.5)
+local weapon_arcs = true         -- the option
+local said_weapon = nil
+
+-- the kind of the weapon in my hand, while aiming: nil when it isn't one of WEAPONS
+local function held_weapon(c)
+  if not (weapon_watch and me) then return nil end
+  for _, it in ipairs(weapon_watch.items) do
+    if chef.unit_alive(it.unit) then
+      local x, y = chef.unit_position(it.unit)
+      if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 < HELD_NEAR * HELD_NEAR then
+        local fx, fy, fz = chef.unit_rotation(it.unit)
+        if type(fx) == 'number' and fx * c.fx + fy * c.fy + fz * c.fz >= HELD_ALONG then return it.kind end
+      end
+    end
+  end
+  return nil
+end
+
+local function first_person(c)
+  if not me then return false end
+  local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
+  if fh < 1e-6 then return false end
+  return -((c.x - me[1]) * c.fx + (c.y - me[2]) * c.fy) / fh < FIRST_PERSON
+end
+
+-- the round's path: points every STEP s of flight, until its lifetime, MOST_T or DEEPEST under my feet
+local function weapon_path(c, w)
+  local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
+  local hx, hy = 0, 1
+  if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
+  local ux, uy, uz = -c.fz * hx, -c.fz * hy, fh     -- up, across the view
+  local f = WEAPON_FROM
+  local px = c.x + c.fx * f[1] + hy * f[2] + ux * f[3]
+  local py = c.y + c.fy * f[1] - hx * f[2] + uy * f[3]
+  local pz = c.z + c.fz * f[1] + uz * f[3]
+  local pitch = camera_pitch(c) + WEAPON_LIFT
+  local mx, my = my_move()
+  local vx, vy, vz = hx * w[1] * math.cos(pitch) + mx, hy * w[1] * math.cos(pitch) + my, w[1] * math.sin(pitch)
+  local k, g = WEAPON_K * w[3], GRAVITY * w[2]
+  local last = math.min(w[4] or MOST_T, MOST_T)
+  local deepest = (feet_z or (c.z - 2)) - DEEPEST
+  local pts = { { px, py, pz } }
+  local t, next_t = 0, STEP
+  while t < last do
+    local d = k * math.sqrt(vx * vx + vy * vy + vz * vz) * WEAPON_STEP
+    vx, vy, vz = vx - d * vx, vy - d * vy, vz - g * WEAPON_STEP - d * vz
+    px, py, pz = px + vx * WEAPON_STEP, py + vy * WEAPON_STEP, pz + vz * WEAPON_STEP
+    t = t + WEAPON_STEP
+    if t >= next_t - 1e-9 or t >= last then
+      next_t = next_t + STEP
+      pts[#pts + 1] = { px, py, pz }
+      if pz < deepest then break end
+    end
+  end
+  return pts
+end
+
+-- the weapon to draw for this frame: its row in WEAPONS, or nil
+local function weapon_aimed(c)
+  if not (weapon_arcs and aim_down) then
+    said_weapon = nil
+    return nil
+  end
+  local kind = held_weapon(c)
+  local fp = kind and first_person(c)
+  local said = kind and (WEAPONS[kind][5] .. (fp and ' (first person: not drawn)' or '')) or 'none'
+  if said ~= said_weapon then
+    said_weapon = said
+    log('weapon aimed: %s', said)
+  end
+  return kind and not fp and WEAPONS[kind] or nil
 end
 
 -- ------------------------------------------------------------------ C4's mode by the crosshair
@@ -718,6 +827,9 @@ if chef.has and chef.has('menu') then
   chef.on_change('arc_color', function(v) arc_color = v end)
   show_icon = chef.option('c4_icon', { type = 'toggle', label = 'C4 mode icon by the crosshair', default = true }) ~= false
   chef.on_change('c4_icon', function(v) show_icon = v ~= false end)
+  weapon_arcs = chef.option('weapon_arcs', { type = 'toggle', label = 'Weapon arcs (grenade launchers, rockets...)',
+                                             default = true }) ~= false
+  chef.on_change('weapon_arcs', function(v) weapon_arcs = v ~= false end)
 end
 local icon_mode, icon_next = nil, 0
 
@@ -844,12 +956,15 @@ function M.update(dt)
   read_c4(c)
   c4_icon(c)
   local h = follow_hold()
+  local weapon = not (aiming or c4_aim or h) and weapon_aimed(c)
   if aiming then
     draw_arc(c, false, release_point(c, ball, false))
   elseif c4_aim then
     draw_arc(c, true, release_point(c, c4_det, true))
   elseif h then
     draw_arc(c, h.c4, release_point(c, h.unit, h.c4, h.off))
+  elseif weapon then
+    draw_points(c, weapon_path(c, weapon))
   else
     clear_arc()
   end
@@ -860,6 +975,7 @@ function M.shutdown()
   if det_watch then det_watch.stop() end
   if vehicle_watch then vehicle_watch.stop() end
   if ball_watch then ball_watch.stop() end
+  if weapon_watch then weapon_watch.stop() end
 end
 
 return M

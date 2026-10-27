@@ -47,6 +47,7 @@ chef = {
   camera = function() return fake.cam end,
   unit_alive = function(u) return u.dead ~= true end,
   unit_kind = function(u) return u.kind end,
+  unit_rotation = function(u) if u.f then return u.f[1], u.f[2], u.f[3], 0 end end,
   unit_position = function(u)
     if u.kind == '46cab355bd8d4d37' then error('NATIVE CRASH: asked a runtime-built unit') end
     return u.x, u.y, u.z
@@ -882,6 +883,83 @@ class ArcTest(unittest.TestCase):
             self.fake)
         self.aim(-60)
         self.assertGreater(len(self.lines()), 20)
+
+    # ------------------------------------------------------------------ weapons (1.1.0)
+    GL = "02eecd0b1fa49630"
+
+    def weapon_in_hand(self, kind, back=1.5, f=(1, 0, 0)):
+        """my helldiver BACK m ahead of the camera (third person), a weapon unit by its right hand pointing F"""
+        self.lua.eval("function(f, x) f.me.x = x end")(self.fake, back)
+        u = self.add_unit(kind, back + 0.3, -0.2, 1.2)
+        self.lua.eval("function(u, x, y, z) u.f = { x, y, z } end")(u, *f)
+        return u
+
+    @staticmethod
+    def flight(speed, gravity, drag_term, pitch_deg, start):
+        """the drawn round's flight in Python, where it comes down to z = 0: x"""
+        x, z = start
+        p = math.radians(pitch_deg + 0.6)
+        vx, vz = speed * math.cos(p), speed * math.sin(p)
+        h = 1 / 120
+        while z > 0:
+            d = 4.7e-4 * drag_term * math.hypot(vx, vz) * h
+            vx, vz = vx - d * vx, vz - 9.81 * gravity * h - d * vz
+            x, z = x + vx * h, z + vz * h
+        return x
+
+    def test_a_grenade_launcher_aimed_draws_its_round(self):
+        p = math.radians(10)
+        self.weapon_in_hand(self.GL, f=(math.cos(p), 0, math.sin(p)))     # held: it points the way I look
+        self.fake.look(10)
+        self.fake["mouse"]["right"] = True
+        self.frames(3)
+        lines = self.lines()
+        self.assertGreater(len(lines), 20)
+        self.assertIn("weapon aimed: GL-21 Grenade Launcher", self.logs())
+        first = min(lines, key=lambda l: l[0])
+        # from 1.3 m ahead, 0.18 m left and 0.35 m below the camera, across the view
+        self.assertAlmostEqual(first[0], 1.3 * math.cos(p) + 0.35 * math.sin(p), delta=0.05)
+        self.assertAlmostEqual(first[1], 0.18, delta=0.05)
+        self.assertAlmostEqual(first[2], 2 + 1.3 * math.sin(p) - 0.35 * math.cos(p), delta=0.05)
+        # comes down where the drag law says, well short of a drag-free flight
+        down = [l for l in lines if l[2] >= 0 >= l[5]][0]
+        want = self.flight(100, 1, 38.4, 10, (first[0], first[2]))
+        self.assertAlmostEqual(down[0], want, delta=3)
+        self.assertLess(want, 0.6 * self.flight(100, 1, 0, 10, (first[0], first[2])))
+
+    def test_no_weapon_arc_in_first_person(self):
+        self.weapon_in_hand(self.GL, back=0.1)
+        self.fake["mouse"]["right"] = True
+        self.frames(3)
+        self.assertEqual(self.lines(), [])
+        self.assertIn("weapon aimed: GL-21 Grenade Launcher (first person: not drawn)", self.logs())
+
+    def test_a_worn_weapon_draws_nothing(self):
+        self.weapon_in_hand(self.GL, f=(0, 0, -1))      # on my back, pointing down
+        self.fake["mouse"]["right"] = True
+        self.frames(3)
+        self.assertEqual(self.lines(), [])
+        self.assertIn("weapon aimed: none", self.logs())
+
+    def test_no_weapon_arc_without_aiming(self):
+        self.weapon_in_hand(self.GL)
+        self.frames(3)
+        self.assertEqual(self.lines(), [])
+
+    def test_the_airburst_rocket_ends_at_its_burst(self):
+        self.weapon_in_hand("26e40437ea275296")
+        self.fake["mouse"]["right"] = True
+        self.frames(3)
+        far = max(max(l[0], l[3]) for l in self.lines())
+        self.assertGreater(far, 340)          # about 1.5 s at 250 m/s, a little slowed
+        self.assertLess(far, 380)
+
+    def test_weapon_arcs_can_be_turned_off(self):
+        self.weapon_in_hand(self.GL)
+        self.fake.changes["weapon_arcs"](False)
+        self.fake["mouse"]["right"] = True
+        self.frames(3)
+        self.assertEqual(self.lines(), [])
 
 
 if __name__ == "__main__":
