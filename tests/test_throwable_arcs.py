@@ -956,8 +956,44 @@ class ArcTest(unittest.TestCase):
         for _ in range(40):
             self.fake.round_fly()
             self.frames(1)
-        self.assertRegex(self.logs(), r"shot check GL-21 Grenade Launcher: moving 0\.0 ahead 0\.0 right, turning -?0 deg/s "
-                                      r"right -?0 up; at \d+ m the round is -?0\.\d\d m right -?0\.\d\d m up of the arc")
+        self.assertRegex(self.logs(), r"shot check GL-21 Grenade Launcher \(round a6cd8a90185b6567, aimed by the weapon\): "
+                                      r"moving 0\.0 ahead 0\.0 right, turning -?0 deg/s right -?0 up; at \d+ m the round "
+                                      r"is -?0\.\d\d m right -?0\.\d\d m up of the arc")
+
+    def arc_end(self):
+        return max(self.lines(), key=lambda l: l[3])
+
+    def test_walking_sideways_doesnt_bend_the_weapon_arc(self):
+        self.weapon_in_hand(self.GL)
+        self.fake["mouse"]["right"] = True
+        self.frames(10)
+        still = self.arc_end()
+        walk = self.lua.eval("function(f) f.walk = function() f.me.y = f.me.y + 2.2 / 60 end end")
+        walk(self.fake)
+        for _ in range(20):
+            self.fake.walk()
+            self.frames(1)
+        moved = self.arc_end()
+        self.assertAlmostEqual(moved[4], still[4], delta=0.05)    # the camera stayed: the arc too
+
+    def test_the_weapon_arc_follows_a_lagging_weapon(self):
+        # held still, the GL points 1 degree above the camera: learned, and taken off
+        up = math.radians(1)
+        gl = self.weapon_in_hand(self.GL, f=(math.cos(up), 0, math.sin(up)))
+        self.fake["mouse"]["right"] = True
+        self.frames(30)
+        still = self.arc_end()
+        self.assertAlmostEqual(still[4], 0.18, delta=0.3)
+        # the camera swings left fast (+y), the weapon still points where it did: the arc stays with the weapon
+        turn = self.lua.eval("""function(f) f.turn = function(deg)
+          local a = math.rad(deg); f.cam.fx, f.cam.fy = math.cos(a), math.sin(a) end end""")
+        turn(self.fake)
+        for i in range(1, 6):
+            self.fake.turn(i * 2)           # 120 degrees/s
+            self.frames(1)
+        self.assertGreater(len(self.lines()), 20, "kept while the weapon lags (10 degrees off)")
+        lagged = self.arc_end()
+        self.assertLess(abs(lagged[4] - still[4]), 1.0)
 
     def test_no_weapon_arc_in_first_person(self):
         self.weapon_in_hand(self.GL, back=0.1)
