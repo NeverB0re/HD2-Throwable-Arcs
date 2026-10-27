@@ -917,15 +917,47 @@ class ArcTest(unittest.TestCase):
         self.assertGreater(len(lines), 20)
         self.assertIn("weapon aimed: GL-21 Grenade Launcher", self.logs())
         first = min(lines, key=lambda l: l[0])
-        # from 1.3 m ahead, 0.18 m left and 0.35 m below the camera, across the view
-        self.assertAlmostEqual(first[0], 1.3 * math.cos(p) + 0.35 * math.sin(p), delta=0.05)
+        # from the muzzle (0.45 m ahead of the weapon unit), on the round's line: 0.18 m left and 0.35 m below the
+        # camera's, across the view
+        along = lambda l: l[0] * math.cos(p) + (l[2] - 2) * math.sin(p)
+        muzzle = (1.8 + 0.45 * math.cos(p)) * math.cos(p) + (1.2 + 0.45 * math.sin(p) - 2) * math.sin(p)
+        self.assertAlmostEqual(along(first), muzzle, delta=0.05)
         self.assertAlmostEqual(first[1], 0.18, delta=0.05)
-        self.assertAlmostEqual(first[2], 2 + 1.3 * math.sin(p) - 0.35 * math.cos(p), delta=0.05)
+        self.assertAlmostEqual(-first[0] * math.sin(p) + (first[2] - 2) * math.cos(p), -0.35, delta=0.05)
+        # dashed as the stratagem arc: points 0.66 m apart near me
+        near = sorted({round(along(l), 2) for l in lines if along(l) < 20})
+        self.assertAlmostEqual(near[1] - near[0], 0.66, delta=0.05)
         # comes down where the drag law says, well short of a drag-free flight
+        start = (1.3 * math.cos(p) + 0.35 * math.sin(p), 2 + 1.3 * math.sin(p) - 0.35 * math.cos(p))
         down = [l for l in lines if l[2] >= 0 >= l[5]][0]
-        want = self.flight(100, 1, 38.4, 10, (first[0], first[2]))
+        want = self.flight(100, 1, 38.4, 10, start)
         self.assertAlmostEqual(down[0], want, delta=3)
-        self.assertLess(want, 0.6 * self.flight(100, 1, 0, 10, (first[0], first[2])))
+        self.assertLess(want, 0.6 * self.flight(100, 1, 0, 10, start))
+
+    def test_a_shot_is_checked_against_the_arc(self):
+        p = math.radians(10)
+        self.weapon_in_hand(self.GL, f=(math.cos(p), 0, math.sin(p)))
+        self.fake.look(10)
+        self.fake["mouse"]["right"] = True
+        self.frames(3)
+        self.fake["mouse"]["left"] = True
+        self.frames(1)
+        # the round, a frame later: flies the arc's line, 0.1 m higher
+        rnd = self.add_unit("a6cd8a90185b6567", 0, 0, 0)
+        self.lua.eval("""function(f, r, t0, p)
+          f.round_fly = function()
+            local t = f.t - t0
+            r.x = 1.3 * math.cos(p) + 0.35 * math.sin(p) + 98 * math.cos(p) * t
+            r.y = 0.18
+            r.z = 2 + 1.3 * math.sin(p) - 0.35 * math.cos(p) + 98 * math.sin(p) * t - 4.9 * t * t + 0.1
+          end
+          f.round_fly()
+        end""")(self.fake, rnd, self.fake.t, p)
+        for _ in range(40):
+            self.fake.round_fly()
+            self.frames(1)
+        self.assertRegex(self.logs(), r"shot check GL-21 Grenade Launcher: moving 0\.0 ahead 0\.0 right, turning -?0 deg/s "
+                                      r"right -?0 up; at \d+ m the round is -?0\.\d\d m right -?0\.\d\d m up of the arc")
 
     def test_no_weapon_arc_in_first_person(self):
         self.weapon_in_hand(self.GL, back=0.1)
