@@ -888,10 +888,18 @@ class ArcTest(unittest.TestCase):
         self.assertGreater(self.far_end() / plain, 1.08)
 
     def drawn_speed(self, pitch):
-        """the throw speed the arc was drawn with: a late segment's run along the view (it looks along x), per step"""
-        centre = self.lines()[0::2]
-        l = centre[len(centre) // 2]
+        """the throw speed the arc was drawn with: the first segment's run along the view (it looks along x), per step
+        (the first: past the top, segments are half a step)"""
+        l = self.lines()[0]
         return (l[3] - l[0]) / 0.03 / math.cos(math.radians(pitch))
+
+    def test_the_falling_part_is_dashed_finer(self):
+        self.aim(30)
+        lines = self.lines()
+        top = max(lines, key=lambda l: l[2])
+        rising = [l[3] - l[0] for l in lines if l[5] > l[2]]
+        falling = [l[3] - l[0] for l in lines if l[5] < l[2] and l[0] > top[0] + 2]
+        self.assertAlmostEqual(falling[0] / rising[0], 0.5, delta=0.05)
 
     def test_servo_assisted_speeds(self):
         # as measured in test.26: stratagem balls 1.2x (26.4 m/s), C4 1.3x (29.1 m/s)

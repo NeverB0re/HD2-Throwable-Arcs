@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.6'
+local VERSION = '1.1.0-test.7'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -596,6 +596,9 @@ local render_scale, scale_next = 1, 0
 -- the arc is dashed by flight time: DASH segments drawn, GAP left out (about 1.3 m and 0.7 m). test.10-11 measured
 -- dashes in px from the camera, so they slid along the arc whenever the camera moved: it rippled as you turned
 local DASH, GAP = 2, 1
+-- 1.1.0-test.7: past the top of the arc, where it lands, the dashes are DOWN as long (and as far apart): where the arc
+-- goes into the ground shows finer (a dash cut short there is easier to see than in long ones)
+local DOWN = 0.5
 -- where a throw is let go: above the ball (or the C4) in my hand, standing, crouched or prone alike (during the hold,
 -- where it was then, from my feet); else right of my chest, or under the camera
 local function release_point(c, held, c4, from_feet)
@@ -640,7 +643,7 @@ local function path(c, c4, ox, oy, oz)
   local pts = { { at(0) } }
   local t = 0
   while t < MOST_T do
-    t = t + STEP
+    t = t + (vz - GRAVITY * t < 0 and STEP * DOWN or STEP)
     local x, y, z = at(t)
     pts[#pts + 1] = { x, y, z }
     if z < deepest then break end
@@ -741,7 +744,7 @@ local WEAPONS = {
   ['02eecd0b1fa49630'] = { 100, 1, 38.4, false, 'GL-21 Grenade Launcher' },             -- measured
   ['fe3b29b2cfa63f9b'] = { 100, 1, 38.4, false, 'GL-52 De-Escalator' },                 -- measured (the GL-21's round)
   ['88c2d09ad85a7c9f'] = { 100, 1, 38.4, false, 'GL-28 Belt-Fed Grenade Launcher' },
-  ['006e44327bb953fe'] = { 100, 1, 38.4, false, 'pump grenade launcher (GL-15 Evictor?)' },
+  ['006e44327bb953fe'] = { 100, 1, 38.4, false, 'GL-15 Evictor' },          -- (the wiki: a pump-action launcher)
   ['52e4334e6a128caf'] = { 100, 1, 38.4, false, 'GP-31 Grenade Pistol' },
   ['9eb160830321bfd6'] = { 20, 1, 6.4, false, 'GP-20 Ultimatum' },                      -- measured
   ['e91f569c2ad8af01'] = { 100, 1, 0, false, 'P-34 Breacher' },   -- measured: 100 m/s, flies 7 s+ (wiki: 150, 1.7 s)
@@ -751,7 +754,7 @@ local WEAPONS = {
   ['9f80d67a12a7e40f'] = { 250, 1, 0.657, false, 'GR-8 Recoilless Rifle' },
   ['80932fa0ed6901d3'] = { 200, 1, 0, false, 'EAT-17 Expendable Anti-Tank' },
   ['b2b5e0d185605f9e'] = { 200, 1, 0, false, 'EAT-700 Expendable Napalm' },
-  ['7617642765ac38c7'] = { 50, 1, 6.4, false, 'expendable massive rocket launcher (EAT-411 Leveller?)' },
+  ['7617642765ac38c7'] = { 50, 1, 6.4, false, 'EAT-411 Leveller' },  -- (the wiki: a large disposable launcher)
 }
 local weapon_kinds = {}
 for kind in pairs(WEAPONS) do weapon_kinds[kind] = true end
@@ -862,7 +865,7 @@ local function weapon_path(c, w, muzzle, aim)
   local pts, to_go = {}, 0       -- to_go: m of flight until the next point
   local function put(x, y, z)
     pts[#pts + 1] = { x, y, z }
-    to_go = math.max(SEG, SEG_FAR * math.sqrt((x - c.x) ^ 2 + (y - c.y) ^ 2 + (z - c.z) ^ 2))
+    to_go = math.max(SEG, SEG_FAR * math.sqrt((x - c.x) ^ 2 + (y - c.y) ^ 2 + (z - c.z) ^ 2)) * (vz < 0 and DOWN or 1)
   end
   local t = 0
   while t < last and #pts < MOST_POINTS do
