@@ -1,0 +1,27 @@
+Third-party notices
+
+Stratagem and C4 Trajectory reads C4 and weapons the way NarrowHUD does, and src/weapon_types.lua is taken from
+NarrowHUD's game data. Based on NarrowHUD by luka189 (https://github.com/luka189/NarrowHUD, Nexus 17882).
+NarrowHUD's licence, in full:
+
+NarrowHUD
+Copyright (c) 2026 luka189
+
+Permission is granted, free of charge, to anyone who gets a copy of this mod and its source code, to use, copy,
+modify, merge, publish, distribute, reupload, translate and build on it, in whole or in part, for any purpose, on these
+conditions:
+
+1. No selling. You may not sell this mod or anything made from it, or put it (or a version of it) behind a
+   paywall, subscription, early access or members-only release (Patreon and the like): it stays free for everyone.
+   Donations, and mod-site reward programmes such as Nexus Mods' Donation Points, are fine.
+
+2. Credit. Keep a line crediting the original, such as "Based on NarrowHUD by luka189", in what you share.
+
+3. This notice. Keep this license with the code you share, in full or in part.
+
+The mod is given as it is, without any warranty. Its author is not liable for anything that comes from using it,
+including a crashed game or a lost mission.
+
+Helldivers 2 is a trademark of its respective owners. NarrowHUD is an unofficial fan mod, not affiliated with or
+endorsed by Arrowhead Game Studios or Sony Interactive Entertainment. It runs on Chef Shared Loader by Th3chef, which
+has its own license and is not part of this mod.

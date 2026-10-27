@@ -395,6 +395,34 @@ class ArcTest(unittest.TestCase):
         self.assertIn("Helldiver fields changed: du7kbt=3", logs)
         self.assertNotIn("NATIVE CRASH", logs)
 
+    def test_the_one_two_draws_only_with_its_grenade_launcher(self):
+        with open(os.path.join(HERE, "..", "src", "weapon_types.lua"), encoding="utf-8") as f:
+            third = re.search(r"\[\[\s*(\S+)\s+(\S+)\s+(\S+)", f.read()).group(3)
+        self.lua.eval("""function(f, name)
+          f.E['Network.game_session'] = function() return 'gs' end
+          f.E['Network.peer_id'] = function() return 'me' end
+          f.E['GameSession.objects_owned_by'] = function() return { 5, 6 } end
+          f.E['GameSession.game_object_exists'] = function() return true end
+          f.E['GameSession.game_object_is_type'] = function(gs, g, t) return g == 6 and t == name end
+          f.E['GameSession.game_object_field'] = function(gs, g, field)
+            if g == 6 and field == 'if5_pz' then return f.fire_mode end
+            error('NATIVE CRASH: an undeclared field')
+          end
+          f.fire_mode = 1
+        end""")(self.fake, third)
+        self.weapon_in_hand("a955c4ea6f6d4203")
+        self.fake["mouse"]["right"] = True
+        self.frames(5)
+        self.assertEqual(self.lines(), [], "the rifle: no arc")
+        self.fake.fire_mode = 9                       # the underbarrel selected (bit 8)
+        self.frames(2)
+        self.assertGreater(len(self.lines()), 20)
+        logs = self.logs()
+        self.assertIn("one-two: my object 6 is weapon type " + third, logs)
+        self.assertIn("one-two: object 6 (type %s) fire mode 9" % third, logs)
+        self.assertIn("weapon aimed: AR/GL-21 One-Two (its grenade launcher)", logs)
+        self.assertNotIn("NATIVE CRASH", logs)
+
     def test_an_unknown_weapon_aimed_is_named(self):
         self.weapon_in_hand("abcdefabcdefabcd")
         self.fake["mouse"]["right"] = True

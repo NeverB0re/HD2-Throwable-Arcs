@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.7'
+local VERSION = '1.1.0-test.8'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -755,6 +755,8 @@ local WEAPONS = {
   ['80932fa0ed6901d3'] = { 200, 1, 0, false, 'EAT-17 Expendable Anti-Tank' },
   ['b2b5e0d185605f9e'] = { 200, 1, 0, false, 'EAT-700 Expendable Napalm' },
   ['7617642765ac38c7'] = { 50, 1, 6.4, false, 'EAT-411 Leveller' },  -- (the wiki: a large disposable launcher)
+  -- the One-Two's underbarrel launcher fires the GP-31's round; drawn only while its fire mode selects it (ub)
+  ['a955c4ea6f6d4203'] = { 100, 1, 38.4, false, 'AR/GL-21 One-Two (its grenade launcher)', ub = true },
 }
 local weapon_kinds = {}
 for kind in pairs(WEAPONS) do weapon_kinds[kind] = true end
@@ -888,6 +890,62 @@ local function weapon_path(c, w, muzzle, aim)
   return pts
 end
 
+-- test.8: is the underbarrel launcher selected? As NarrowHUD tells it: my weapons' network objects, their fire mode
+-- field (if5_pz) with the 8 bit set selects the underbarrel. Which of my objects are weapons is found by trying each
+-- against the weapon types that declare that field (WEAPON_TYPES, from NarrowHUD's data), UB_BUDGET tries a frame (as
+-- host I own every soldier's objects: thousands); a field is read only from an object just found to be of such a type
+-- (reading one a type doesn't declare can end the game). Only while the One-Two is in hand; my objects looked for again
+-- every UB_LOOK s.
+local underbarrel_on = (function()
+  local TYPES, FIRE_MODE, UB_BUDGET, UB_LOOK = {}, 'if5_pz', 300, 2
+  for name in ("@WEAPON_TYPES@"):gmatch('%S+') do TYPES[#TYPES + 1] = name end
+  local session, tried, weapons, next_look, said = nil, {}, {}, 0, {}
+  local function call(name, tag, ...) return chef.call_kind(name, 'ub ' .. tag, ...) end
+  return function()
+    local gs = call('Network.game_session', 'session')
+    if not gs then return false end
+    if gs ~= session then session, tried, weapons, said = gs, {}, {}, {} end
+    if now() >= next_look then
+      next_look = now() + UB_LOOK
+      local peer = call('Network.peer_id', 'peer')
+      local mine = peer and call('GameSession.objects_owned_by', 'owned', gs, peer)
+      if type(mine) == 'table' then for _, g in pairs(mine) do if tried[g] == nil then tried[g] = 1 end end end
+    end
+    local budget = UB_BUDGET
+    for g, i in pairs(tried) do
+      if budget <= 0 then break end
+      if type(i) == 'number' then
+        if i == 1 and call('GameSession.game_object_exists', 'exists', gs, g) ~= true then i = #TYPES + 1 end
+        while budget > 0 and i <= #TYPES do
+          budget = budget - 1
+          if call('GameSession.game_object_is_type', 'type', gs, g, TYPES[i]) == true then
+            weapons[g] = TYPES[i]
+            log('one-two: my object %s is weapon type %s', tostring(g), TYPES[i])
+            break
+          end
+          i = i + 1
+        end
+        tried[g] = (weapons[g] or i > #TYPES) and false or i
+      end
+    end
+    local on = false
+    for g, name in pairs(weapons) do
+      if call('GameSession.game_object_exists', 'exists', gs, g) == true
+         and call('GameSession.game_object_is_type', 'type', gs, g, name) == true then
+        local fm = call('GameSession.game_object_field', 'fire mode', gs, g, FIRE_MODE)
+        if said[g] ~= fm then
+          said[g] = fm
+          log('one-two: object %s (type %s) fire mode %s', tostring(g), name, tostring(fm))
+        end
+        if type(fm) == 'number' and math.floor(fm / 8) % 2 == 1 then on = true end
+      else
+        weapons[g], tried[g] = nil, nil
+      end
+    end
+    return on
+  end
+end)()
+
 -- the weapon to draw for this frame: its row in WEAPONS and its muzzle, or nil
 local function weapon_aimed(c)
   if not (weapon_arcs and aim_down) then
@@ -895,6 +953,7 @@ local function weapon_aimed(c)
     return nil
   end
   local kind, u = held_weapon(c)
+  if kind and WEAPONS[kind].ub and not underbarrel_on() then kind = nil end     -- (its rifle: no arc)
   local fp = kind and first_person(c)
   local said = kind and (WEAPONS[kind][5] .. (fp and ' (first person: not drawn)' or '')) or 'none'
   if said ~= said_weapon then
