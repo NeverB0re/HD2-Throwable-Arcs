@@ -322,11 +322,10 @@ class ArcTest(unittest.TestCase):
         self.assertAlmostEqual(first[0], 0.42, delta=0.02)
         self.assertAlmostEqual(first[1], -0.4, delta=0.02)
         # left throws it: the arc goes at once
-        self.fake["mouse"]["left"] = True           # thrown: kept until the charge shows up
+        self.fake["mouse"]["left"] = True           # thrown: kept while it leaves the hand (0.15 s)
         self.frames(3)
         self.assertGreater(len(self.lines()), 20)
-        self.add_unit("9b75217d8312dd67", -0.05, -0.4, 1.6)
-        self.frames(1)
+        self.frames(8)
         self.assertEqual([l[2] for l in self.lines()], [-10000])
         self.frames(1)
         self.assertEqual(self.lines(), [])
@@ -400,10 +399,9 @@ class ArcTest(unittest.TestCase):
         self.assertGreater(len(lines), 20)
         self.assertAlmostEqual((lines[0][0] + lines[1][0]) / 2, 0.42, delta=0.02)   # from the detonator
         self.assertAlmostEqual((lines[0][2] + lines[1][2]) / 2, 2.05, delta=0.02)   # 1 m above it
-        # thrown: the charge leaves, then no arc for 0.8 s while the arm swings, then again
+        # thrown: it leaves the hand, then no arc for 0.8 s while the arm swings, then again
         self.fake["mouse"]["left"] = True
         self.frames(2)
-        self.add_unit("9b75217d8312dd67", 0.42, -0.4, 1.3)
         self.fake["mouse"]["left"] = False
         self.frames(20)
         self.assertEqual(self.lines(), [])

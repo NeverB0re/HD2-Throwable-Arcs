@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.0.3-test.2'
+local VERSION = '1.0.3-test.3'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -257,24 +257,20 @@ local was_hold = false
 
 -- After the throw is let go (left released with a ball, left pressed with C4 aimed) the arc stays up until it leaves my
 -- hand (1.0.3; the swing takes a moment): it keeps following the camera, from where the hand was then, kept by my feet.
--- It ends when the ball is HOLD_GONE m or more from there, or a new C4 charge shows up within C4_GONE m of it (one is
--- first seen about 3 m off: 1.0.3-test.1 looked within 1.5 m and saw none), or after HOLD_MOST s.
-local HOLD_MOST, HOLD_GONE, C4_GONE = 0.6, 1.5, 6
+-- It ends when the ball is HOLD_GONE m or more from there, or after HOLD_MOST s. C4's hold just lasts C4_HOLD s: the
+-- charge leaves the hand about then (1.0.3-test.2, fitted back from its flight), but the game lists a new charge only
+-- every half second or so, too late to end the arc on.
+local HOLD_MOST, HOLD_GONE, C4_HOLD = 0.6, 1.5, 0.15
 local hold = nil                 -- { c4, unit, off = { from my feet }, at, pos }
 local on_hold = nil              -- test builds: function(c, hold, what) at 'start' and 'end'
 local on_frame = nil             -- test builds: function(c) each frame
-local C4_CHARGE = '9b75217d8312dd67'
-local charge_watch = chef.watch and chef.watch({ [C4_CHARGE] = true }, 0.5)
 
 local function start_hold(c, unit, c4)
   local x, y, z
   if unit and chef.unit_alive(unit) then x, y, z = chef.unit_position(unit) end
   if not x then hold = nil return end
   hold = { c4 = c4, unit = unit, at = now(), pos = { x, y, z },
-           off = me and { x - me[1], y - me[2], z - me[3] } or nil, before = {} }
-  if c4 and charge_watch then
-    for _, it in ipairs(charge_watch.items) do hold.before[it.unit] = true end
-  end
+           off = me and { x - me[1], y - me[2], z - me[3] } or nil }
   if on_hold then on_hold(c, hold, 'start') end
 end
 
@@ -748,25 +744,14 @@ end
 
 -- ------------------------------------------------------------------ the hold's end
 
--- the hold, or nil once the throw has left my hand (a C4 charge's list is asked for afresh each frame of it: a charge
--- is no unit until it flies)
+-- the hold, or nil once the throw has left my hand
 local function follow_hold(c)
   if not hold then return nil end
   local h = hold
   local hx, hy, hz = h.pos[1], h.pos[2], h.pos[3]
   if h.off and me then hx, hy, hz = me[1] + h.off[1], me[2] + h.off[2], me[3] + h.off[3] end
-  local gone, flying = now() - h.at > HOLD_MOST, nil
-  if not gone and h.c4 then
-    if charge_watch then
-      charge_watch.refresh()
-      for _, it in ipairs(charge_watch.items) do
-        if not h.before[it.unit] and chef.unit_alive(it.unit) then
-          local x, y, z = chef.unit_position(it.unit)
-          if x and (x - hx) ^ 2 + (y - hy) ^ 2 + (z - hz) ^ 2 < C4_GONE * C4_GONE then gone, flying = true, it.unit end
-        end
-      end
-    end
-  elseif not gone then
+  local gone, flying = now() - h.at > (h.c4 and C4_HOLD or HOLD_MOST), nil
+  if not gone and not h.c4 then
     local x, y, z
     if chef.unit_alive(h.unit) then x, y, z = chef.unit_position(h.unit) end
     if not x or (x - hx) ^ 2 + (y - hy) ^ 2 + (z - hz) ^ 2 >= HOLD_GONE * HOLD_GONE then gone, flying = true, h.unit end
@@ -879,6 +864,8 @@ on_hold = function(c, h, what, flying)
   elseif measuring and not measuring.unit then
     if flying then
       measuring.unit, measuring.release = flying, now()
+    elseif h.c4 then
+      measuring = nil
     else
       log('throw (%s): nothing seen leaving the hand in %.1f s', h.c4 and 'c4' or 'stratagem', HOLD_MOST)
       measuring = nil
@@ -922,7 +909,6 @@ function M.shutdown()
   if players then players.stop() end
   if det_watch then det_watch.stop() end
   if vehicle_watch then vehicle_watch.stop() end
-  if charge_watch then charge_watch.stop() end
   if ball_watch then ball_watch.stop() end
 end
 
