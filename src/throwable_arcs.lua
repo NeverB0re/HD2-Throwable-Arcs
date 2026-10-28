@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.15'
+local VERSION = '1.1.0-test.16'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -1014,11 +1014,16 @@ end)()
 -- (lift: the game's "throw_angle_offset" is 5 degrees, in the Helldiver's AvatarComponent data dumped in
 -- github.com/shalzuth/HelldiversData; a grenade's speed isn't in that data)
 local grenade = (function()
-  local GRENADE_SPEED, GRENADE_LIFT, GRENADE_NEAR, GRENADE_FAST, GRENADE_FIT, GRENADE_WAIT = 21, 5, 4, 6, 0.1, 0.8
-  local SAVE = 'grenade_throws'   -- (test.12-14 kept 'grenade_speeds', with test.13's wrong Giga: not read)
-  local throws = { ['c5c05fcb5747c799'] = { 21.7, 5.7 },    -- throwables/sticky_grenade (G-123 Thermite), test.9
-                   ['46333fc9e3d4bd34'] = { 17, 0 },        -- throwables/at_explosive_grenade (G-48 Giga), test.13
-                   ['5c14f27759dd3be0'] = { 21, 5 } }       -- throwables/molotov_grenade, the probe
+  local GRENADE_SPEED, GRENADE_LIFT, GRENADE_NEAR, GRENADE_FAST, GRENADE_FIT, GRENADE_WAIT = 21, 5, 4, 10, 0.6, 1.5
+  local SAVE = 'grenade_throws2'  -- (test.12-15's files, with wrongly learned Gigas, are not read)
+  -- kind -> { speed m/s, lift degrees standing, lift walking (or nil: as standing) }. Walking: WALK m/s or more along
+  -- the aim (the game's own deadzone for a thrower's velocity, "thrower_velocity_deadzone", is 1): test.15's Gigas
+  -- went 2.6-3.2 degrees over the camera standing, 6-16 walking forward. My walk along the aim is added to the speed.
+  local WALK = 1
+  local throws = { ['c5c05fcb5747c799'] = { 21.7, 5.7 },      -- throwables/sticky_grenade (G-123 Thermite), test.9
+                   ['46333fc9e3d4bd34'] = { 16.5, 3, 11 },    -- throwables/at_explosive_grenade (G-48 Giga), test.15
+                   ['7686544f539bb9b7'] = { 22.4, 4.2 },      -- throwables/impact_grenade (G-16 Impact), test.15
+                   ['5c14f27759dd3be0'] = { 21, 5 } }         -- throwables/molotov_grenade, the probe
   -- guided ones: no arc (they steer themselves once thrown); taken as the last thrown, but nothing learned
   local GUIDED = { ['2d398d1ec35e0838'] = true,       -- throwables/self_destruct_drone (G-50 Seeker)
                    ['8e325c933e55bf62'] = true }      -- throwables/at_self_destruct_drone (G-60 Anti-Tank Seeker)
@@ -1026,7 +1031,9 @@ local grenade = (function()
   local saved = chef.load_table and chef.load_table(SAVE)
   if type(saved) == 'table' then
     for kind, v in pairs(type(saved.throws) == 'table' and saved.throws or {}) do
-      if type(v) == 'table' and type(v[1]) == 'number' and type(v[2]) == 'number' then throws[kind] = { v[1], v[2] } end
+      if type(v) == 'table' and type(v[1]) == 'number' and type(v[2]) == 'number' then
+        throws[kind] = { v[1], v[2], type(v[3]) == 'number' and v[3] or nil }
+      end
     end
     if type(saved.last) == 'string' then last = saved.last end
   end
@@ -1052,8 +1059,9 @@ local grenade = (function()
     if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
     local mx, my = my_move()
     local th = kind and throws[kind] or { GRENADE_SPEED, GRENADE_LIFT }
-    local s = th[1] * speed_up(false) + math.max(-CARRY_MOST, math.min(CARRY_MOST, CARRY * (mx * hx + my * hy)))
-    local pitch = camera_pitch(c) + math.rad(th[2])
+    local along = mx * hx + my * hy
+    local s = th[1] * speed_up(false) + along
+    local pitch = camera_pitch(c) + math.rad(math.abs(along) >= WALK and th[3] or th[2])
     local vx, vy, vz = hx * s * math.cos(pitch), hy * s * math.cos(pitch), s * math.sin(pitch)
     local deepest = (feet_z or (c.z - 2)) - DEEPEST
     local pts, t = { { ox, oy, oz } }, 0
@@ -1094,27 +1102,46 @@ local grenade = (function()
     end
   end
 
-  -- a unit's throw from its positions: speed (less my velocity and the perk) and lift (degrees over the camera), from
-  -- where it first moves GRENADE_FAST m/s, over GRENADE_FIT s
+  -- a unit's throw from its positions: speed (less my velocity along the aim and the perk) and lift (degrees over the
+  -- camera). test.16: the flight from the frame after it leaves the hand (the first step at GRENADE_FAST m/s or more:
+  -- cooked in a swinging hand it moves up to about 6 m/s before) until it lands or GRENADE_FIT s, fitted as a throw
+  -- (least squares: straight across, falling at GRAVITY); test.15 took the swing for the throw and learned the Giga at
+  -- 4-8 m/s, steeply up
   local function throw_of(k, pts)
+    local first
     for i = 2, #pts do
       local a, b = pts[i - 1], pts[i]
       local dt = b[1] - a[1]
       if dt > 0 and math.sqrt((b[2] - a[2]) ^ 2 + (b[3] - a[3]) ^ 2 + (b[4] - a[4]) ^ 2) / dt >= GRENADE_FAST then
-        for j = i, #pts do
-          local e = pts[j]
-          local d = e[1] - a[1]
-          if d >= GRENADE_FIT then
-            local vx, vy = (e[2] - a[2]) / d - k.mx, (e[3] - a[3]) / d - k.my
-            local vz = (e[4] - a[4]) / d + 0.5 * GRAVITY * d
-            local h = math.sqrt(vx * vx + vy * vy)
-            return math.sqrt(h * h + vz * vz) / k.up, math.deg(math.atan2(vz, h)) - k.pitch
-          end
-        end
-        return nil
+        first = i
+        break
       end
     end
-    return nil
+    if not first then return nil end
+    local t0 = pts[first][1]
+    local n, st, stt, sx, sy, sz, stx, sty, stz = 0, 0, 0, 0, 0, 0, 0, 0, 0
+    for i = first, #pts do
+      local p = pts[i]
+      local t = p[1] - t0
+      if t > GRENADE_FIT then break end
+      if i > first then
+        local q = pts[i - 1]
+        local dt = p[1] - q[1]
+        if dt > 0 and math.sqrt((p[2] - q[2]) ^ 2 + (p[3] - q[3]) ^ 2 + (p[4] - q[4]) ^ 2) / dt < 3 then break end  -- landed
+      end
+      local z = p[4] + 0.5 * GRAVITY * t * t
+      n, st, stt = n + 1, st + t, stt + t * t
+      sx, sy, sz, stx, sty, stz = sx + p[2], sy + p[3], sz + z, stx + t * p[2], sty + t * p[3], stz + t * z
+    end
+    local den = n * stt - st * st
+    if n < 4 or den <= 0 then return nil end
+    local vx, vy, vz = (n * stx - st * sx) / den, (n * sty - st * sy) / den, (n * stz - st * sz) / den
+    local h = math.sqrt(vx * vx + vy * vy)
+    if h < 1e-6 then return nil end
+    -- my walk along the throw taken off (the arc adds it back), not across
+    local along = (k.mx * vx + k.my * vy) / h
+    h = h - along
+    return math.sqrt(h * h + vz * vz) / k.up, math.deg(math.atan2(vz, h)) - k.pitch
   end
 
   local function learn(k)
@@ -1135,10 +1162,13 @@ local grenade = (function()
     elseif best_s < 5 or best_s > 40 or best_lift < -15 or best_lift > 20 then
       log('grenade %s: %.1f m/s %+.1f deg, not taken (it hit something?)', best_kind, best_s, best_lift)
     else
-      local was = throws[best_kind]
-      throws[best_kind] = was and { (was[1] + best_s) / 2, (was[2] + best_lift) / 2 } or { best_s, best_lift }
-      log('grenade %s thrown: %.1f m/s %+.1f deg (now %.1f %+.1f; was %s)', best_kind, best_s, best_lift,
-          throws[best_kind][1], throws[best_kind][2], was and string.format('%.1f %+.1f', was[1], was[2]) or 'none')
+      local was = throws[best_kind] or { best_s, best_lift }
+      local walking = math.abs(k.along) >= WALK
+      local th = { (was[1] + best_s) / 2, was[2], was[3] }
+      if walking then th[3] = th[3] and (th[3] + best_lift) / 2 or best_lift else th[2] = (was[2] + best_lift) / 2 end
+      throws[best_kind] = th
+      log('grenade %s thrown%s: %.1f m/s %+.1f deg (now %.1f, %+.1f standing, %s walking)', best_kind,
+          walking and ' walking' or '', best_s, best_lift, th[1], th[2], th[3] and string.format('%+.1f', th[3]) or '-')
     end
     if chef.save_table then chef.save_table(SAVE, { throws = throws, last = last }) end
   end
@@ -1156,6 +1186,8 @@ local grenade = (function()
       if g_was and not g then
         k.released, k.up, k.pitch = t, speed_up(false), math.deg(camera_pitch(c))
         k.mx, k.my = my_move()
+        local fh = math.max(1e-6, math.sqrt(c.fx * c.fx + c.fy * c.fy))
+        k.along = (k.mx * c.fx + k.my * c.fy) / fh
       end
       look(k, t)
       if k.released and t - k.released >= GRENADE_WAIT then learn(k) end

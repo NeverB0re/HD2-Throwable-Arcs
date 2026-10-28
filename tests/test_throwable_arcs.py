@@ -202,7 +202,7 @@ class ArcTest(unittest.TestCase):
         spoon = self.add_unit("3e433ad461c14d69", 0.3, -0.3, 1.5)
         self.lua.eval("""function(f, n, s) f.fly = function()
           n.x = n.x + 20 / 60; s.x = s.x + 3 / 60 end end""")(self.fake, nade, spoon)
-        for _ in range(60):
+        for _ in range(100):
             self.fake.fly()
             self.frames(1)
         self.assertRegex(self.logs(), r"grenade c5c05fcb5747c799 thrown: (19|20|21)\.\d m/s")
@@ -213,7 +213,7 @@ class ArcTest(unittest.TestCase):
         self.fake["down"]["g"] = False
         seeker = self.add_unit("2d398d1ec35e0838", 0.3, -0.3, 1.5)
         self.lua.eval("function(f, n) f.fly = function() n.x = n.x + 15 / 60 end end")(self.fake, seeker)
-        for _ in range(60):
+        for _ in range(100):
             self.fake.fly()
             self.frames(1)
         self.assertIn("grenade 2d398d1ec35e0838 thrown: guided, no arc", self.logs())
@@ -233,11 +233,11 @@ class ArcTest(unittest.TestCase):
         self.frames(1)
         nade = self.add_unit("1234567812345678", 0.3, -0.3, 1.7)
         self.lua.eval("function(f, n) f.nade_fly = function() n.x = n.x + 18 / 60 end end")(self.fake, nade)
-        for _ in range(60):
+        for _ in range(100):
             self.fake.nade_fly()
             self.frames(1)
         self.assertRegex(self.logs(), r"grenade 1234567812345678 thrown: 1[89]\.\d m/s \+\d\.\d deg")
-        saved = self.fake.saved["grenade_throws"]
+        saved = self.fake.saved["grenade_throws2"]
         self.assertEqual(saved.last, "1234567812345678")
         self.assertAlmostEqual(saved.throws["1234567812345678"][1], 18.2, delta=1)
 
