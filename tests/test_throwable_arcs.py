@@ -192,6 +192,21 @@ class ArcTest(unittest.TestCase):
         self.fake["mouse"]["left"] = True
         self.frames(2)
 
+    def test_a_long_cooked_grenade_and_its_spoon(self):
+        self.fake["down"]["g"] = True
+        self.frames(2)
+        nade = self.add_unit("c5c05fcb5747c799", 0.3, -0.3, 1.5)    # a thermite in hand while it cooks
+        self.frames(180)                                            # 3 s
+        self.assertIn("grenade in hand: c5c05fcb5747c799", self.logs())
+        self.fake["down"]["g"] = False
+        spoon = self.add_unit("3e433ad461c14d69", 0.3, -0.3, 1.5)
+        self.lua.eval("""function(f, n, s) f.fly = function()
+          n.x = n.x + 20 / 60; s.x = s.x + 3 / 60 end end""")(self.fake, nade, spoon)
+        for _ in range(30):
+            self.fake.fly()
+            self.frames(1)
+        self.assertRegex(self.logs(), r"grenade c5c05fcb5747c799 thrown: (19|20|21)\.\d m/s")
+
     def test_no_arc_without_aiming(self):
         self.frames(200)
         self.assertEqual(self.lines(), [])

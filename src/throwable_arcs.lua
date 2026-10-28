@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.12'
+local VERSION = '1.1.0-test.13'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -793,7 +793,9 @@ local WEAPONS = {
   ['80932fa0ed6901d3'] = { 200, 1, 0, false, 'EAT-17 Expendable Anti-Tank' },
   ['b2b5e0d185605f9e'] = { 200, 1, 0, false, 'EAT-700 Expendable Napalm' },
   ['7617642765ac38c7'] = { 50, 1, 6.4, false, 'EAT-411 Leveller' },  -- (the wiki: a large disposable launcher)
-  ['e8d5f49ad7780e54'] = { 250, 2, 0.4, 0.6, 'PLAS-45 Epoch' },        -- (its unit: plasma_blaster, test.11)
+  -- (its unit: plasma_blaster, test.11; its round isn't a unit, so only seen by eye: test.12's arc began below the
+  -- muzzle, which sits farther along and higher than the unit's grip: a guess, to be seen in test.13)
+  ['e8d5f49ad7780e54'] = { 250, 2, 0.4, 0.6, 'PLAS-45 Epoch', muzzle = { 0.8, 0.12 } },
   -- the One-Two's underbarrel launcher fires the GP-31's round; drawn only while its fire mode selects it (ub)
   ['a955c4ea6f6d4203'] = { 100, 1, 38.4, false, 'AR/GL-21 One-Two (its grenade launcher)', ub = true },
 }
@@ -827,12 +829,14 @@ local function held_weapon(c)
   return nil
 end
 
--- the muzzle of a held weapon: { x, y, z }, or nil
-local function muzzle_of(u)
+-- the muzzle of a held weapon: { x, y, z }, or nil. A row's muzzle = { ahead, up } (m) where MUZZLE isn't it
+local function muzzle_of(u, w)
   local x, y, z = chef.unit_position(u)
   local fx, fy, fz = chef.unit_rotation(u)
   if not (x and type(fx) == 'number') then return nil end
-  return { x + fx * MUZZLE, y + fy * MUZZLE, z + fz * MUZZLE }
+  local ahead, up = MUZZLE, 0
+  if w.muzzle then ahead, up = w.muzzle[1], w.muzzle[2] end
+  return { x + fx * ahead, y + fy * ahead, z + fz * ahead + up }
 end
 
 local function first_person(c)
@@ -1000,7 +1004,7 @@ local grenade = (function()
   -- (the lift: the game's own "throw_angle_offset", 5 degrees for both throws, in the Helldiver's AvatarComponent
   -- data as dumped in github.com/shalzuth/HelldiversData; test.9-11 measured 4.4-5.7. A grenade's speed isn't in that
   -- data: its throwable settings give every kind the same 20 m reach)
-  local GRENADE_SPEED, GRENADE_LIFT, GRENADE_FIT, GRENADE_NEAR, GRENADE_WAIT = 21, math.rad(5), 0.2, 4, 1.5
+  local GRENADE_SPEED, GRENADE_LIFT, GRENADE_FIT, GRENADE_NEAR = 21, math.rad(5), 0.25, 4
   local SAVE = 'grenade_speeds'
   local speeds = { ['c5c05fcb5747c799'] = 21.7,     -- throwables/sticky_grenade (G-123 Thermite)
                    ['46333fc9e3d4bd34'] = 16.5,     -- throwables/at_explosive_grenade (G-48 Giga)
@@ -1021,13 +1025,14 @@ local grenade = (function()
   end
 
   -- the arc, as path() draws a stratagem ball's
-  local function arc(c)
+  local function arc(c, held)
     local ox, oy, oz = release_point(c, nil, false)
     local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
     local hx, hy = 0, 1
     if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
     local mx, my = my_move()
-    local s = (last and speeds[last] or GRENADE_SPEED) * speed_up(false)
+    local kind = held or last
+    local s = (kind and speeds[kind] or GRENADE_SPEED) * speed_up(false)
               + math.max(-CARRY_MOST, math.min(CARRY_MOST, CARRY * (mx * hx + my * hy)))
     local pitch = camera_pitch(c) + GRENADE_LIFT
     local vx, vy, vz = hx * s * math.cos(pitch), hy * s * math.cos(pitch), s * math.sin(pitch)
@@ -1042,67 +1047,82 @@ local grenade = (function()
     return pts
   end
 
-  -- after G is let go: the new unit near me that flies off, its speed learned
-  local function learn()
-    local k, t = watch, now()
-    if t - k.at > GRENADE_WAIT then
-      log('grenade: none seen flying off')
-      watch = nil
-      return
-    end
-    if not k.unit then
-      for _, u in ipairs(units()) do
-        if not k.before[u] then
-          k.before[u] = true
-          local kind = chef.unit_alive(u) and chef.unit_kind(u)
-          if kind and kind ~= '46cab355bd8d4d37' and me then        -- (never ask where a runtime-built unit is)
-            local x, y, z = chef.unit_position(u)
-            if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 + (z - me[3] - 1) ^ 2 < GRENADE_NEAR * GRENADE_NEAR then
-              k.near[#k.near + 1] = { u, kind, t, x, y, z }
+  -- from G down: the units new near me (the grenade, and things thrown with it: a gas grenade's spoon flies off too);
+  -- GRENADE_FIT s after G is let go, the fastest of them is the grenade, its speed learned (test.12 took the first unit
+  -- to move, a spoon at 3.2 m/s, and only watched from G up for 1.5 s: Giga grenades cooked for longer were missed).
+  -- One of a kind with a speed known turning up before G is let go is the grenade in hand: its speed is drawn.
+  local function look(k, t)
+    for _, u in ipairs(units()) do
+      if not k.before[u] then
+        k.before[u] = true
+        local kind = chef.unit_alive(u) and chef.unit_kind(u)
+        if kind and kind ~= '46cab355bd8d4d37' and me then        -- (never ask where a runtime-built unit is)
+          local x, y, z = chef.unit_position(u)
+          if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 + (z - me[3] - 1) ^ 2 < GRENADE_NEAR * GRENADE_NEAR then
+            k.near[#k.near + 1] = { u, kind, t, x, y, z }
+            if not k.up and speeds[kind] and not k.held then
+              k.held = kind
+              log('grenade in hand: %s', kind)
             end
           end
         end
       end
-      for _, n in ipairs(k.near) do            -- the first to move off is the grenade
-        local x, y, z = chef.unit_position(n[1])
-        if x and (x - n[4]) ^ 2 + (y - n[5]) ^ 2 + (z - n[6]) ^ 2 > 0.25 then
-          k.unit, k.kind, k.first = n[1], n[2], { t, x, y, z }
-          break
-        end
-      end
-      return
     end
-    if t - k.first[1] < GRENADE_FIT then return end
-    local x, y, z = chef.unit_position(k.unit)
+  end
+
+  local function learn(k, t)
     watch = nil
-    if not (x and chef.unit_alive(k.unit)) then return end
-    local dt = t - k.first[1]
-    local vx, vy = (x - k.first[2]) / dt - k.mx, (y - k.first[3]) / dt - k.my
-    local vz = (z - k.first[4]) / dt + 0.5 * GRAVITY * dt
-    local s = math.sqrt(vx * vx + vy * vy + vz * vz) / k.up
-    if s < 5 or s > 40 then
-      log('grenade %s: %.1f m/s, not taken (it hit something?)', k.kind, s)
+    local best, best_s, best_kind = nil, 0, nil
+    for _, n in ipairs(k.near) do
+      local x, y, z = chef.unit_position(n[1])
+      local dt = t - n[3]
+      if x and chef.unit_alive(n[1]) and dt > 0.05 then
+        local vx, vy = (x - n[4]) / dt - k.mx, (y - n[5]) / dt - k.my
+        local vz = (z - n[6]) / dt + 0.5 * GRAVITY * dt
+        local s = math.sqrt(vx * vx + vy * vy + vz * vz) / k.up
+        if s > best_s then best, best_s, best_kind = n, s, n[2] end
+      end
+    end
+    if not best then
+      log('grenade: none seen flying off (%d new units near)', #k.near)
       return
     end
-    local was = speeds[k.kind]
-    speeds[k.kind] = was and (was + s) / 2 or s
-    last = k.kind
-    log('grenade %s thrown: %.1f m/s (now %.1f; was %s)', k.kind, s, speeds[k.kind], tostring(was))
+    if best_s < 5 or best_s > 40 then
+      log('grenade %s: %.1f m/s, not taken (it hit something?)', best_kind, best_s)
+      return
+    end
+    local was = speeds[best_kind]
+    speeds[best_kind] = was and (was + best_s) / 2 or best_s
+    last = best_kind
+    log('grenade %s thrown: %.1f m/s (now %.1f; was %s)', best_kind, best_s, speeds[best_kind], tostring(was))
     if chef.save_table then chef.save_table(SAVE, { speeds = speeds, last = last }) end
   end
 
   local M2 = { on = true }
   -- called every frame; free: nothing else is drawn. Returns the arc's points while G is held, or nil
   function M2.update(c, free)
-    local g = chef.key_down('g') == true
-    if g_was and not g then
-      local mx, my = my_move()
-      watch = { at = now(), before = {}, near = {}, mx = mx, my = my, up = speed_up(false) }
+    local g, t = chef.key_down('g') == true, now()
+    if g and not g_was then
+      watch = { before = {}, near = {} }
       for _, u in ipairs(units()) do watch.before[u] = true end
     end
+    local k = watch
+    if k then
+      if not k.released or t - k.released <= GRENADE_FIT then look(k, t) end
+      if g_was and not g then
+        k.released, k.up = t, speed_up(false)
+        k.mx, k.my = my_move()
+        for _, n in ipairs(k.near) do               -- (each one's flight from here)
+          local x, y, z = chef.unit_position(n[1])
+          if x then n[3], n[4], n[5], n[6] = t, x, y, z end
+        end
+      end
+      if k.released and t - k.released >= GRENADE_FIT then learn(k, t) end
+    end
     g_was = g
-    if watch then learn() end
-    if g and free and M2.on then return arc(c) end
+    if g and free and M2.on then
+      return arc(c, k and k.held)
+    end
     return nil
   end
   return M2
@@ -1123,7 +1143,7 @@ local function weapon_aimed(c)
     log('weapon aimed: %s', said)
   end
   if not kind or fp then return nil end
-  return WEAPONS[kind], muzzle_of(u), u, kind
+  return WEAPONS[kind], muzzle_of(u, WEAPONS[kind]), u, kind
 end
 
 -- test.2-3: each shot while a weapon's arc shows, its round is found and, CHECK_AT s after it is first seen, compared
