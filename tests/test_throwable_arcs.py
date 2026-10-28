@@ -436,7 +436,7 @@ class ArcTest(unittest.TestCase):
         self.weapon_in_hand("abcdefabcdefabcd")
         self.fake["mouse"]["right"] = True
         self.frames(3)
-        self.assertIn("unknown weapon aimed: kind abcdefabcdefabcd", self.logs())
+        self.assertIn("unknown weapon aimed: kind abcdefabcdefabcd,", self.logs())
         self.assertEqual(self.lines(), [])
 
     def plug_pad(self):

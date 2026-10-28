@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.10'
+local VERSION = '1.1.0-test.11'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -1209,22 +1209,27 @@ local unknown_said, unknown_next = {}, 0
 local function unknown_weapon(c)
   if not me or now() < unknown_next then return end
   unknown_next = now() + 1
+  -- (test.10: every one, with where it is: test.9 stopped at the first, a worn piece and a reverb volume, and the Epoch
+  -- in hand was never named)
+  local first
   for _, u in ipairs(all_units()) do
     local kind = chef.unit_alive(u) and chef.unit_kind(u)
     if kind and kind ~= RUNTIME_BUILT and kind ~= PLAYER and not WEAPONS[kind] then
-      local x, y = chef.unit_position(u)
+      local x, y, z = chef.unit_position(u)
       if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 < 2.25 then
         local fx, fy, fz = chef.unit_rotation(u)
         if type(fx) == 'number' and fx * c.fx + fy * c.fy + fz * c.fz >= HELD_ALONG then
           if not unknown_said[kind] then
             unknown_said[kind] = true
-            log('unknown weapon aimed: kind %s', kind)
+            log('unknown weapon aimed: kind %s, %.2f m across from my feet, %.2f m up', kind,
+                math.sqrt((x - me[1]) ^ 2 + (y - me[2]) ^ 2), z - me[3])
           end
-          return kind
+          first = first or kind
         end
       end
     end
   end
+  if first then return first end
 end
 
 local lab_keys, lab_pose, lab_left, lab_unknown = {}, nil, false, nil
