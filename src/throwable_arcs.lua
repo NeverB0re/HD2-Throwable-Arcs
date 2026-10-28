@@ -3,13 +3,13 @@
 -- where it will fly. The arc is a world line: the game hides it behind walls and ground, so where it goes into the
 -- ground is where it lands (the terrain can't be asked). Below native Render Scale the game clips the 3D scene's drawing
 -- to a corner of the screen when the game's anti-aliasing is off (with it on, it shows whole). The numbers are measured
--- from real throws (mods/throwable-arcs/PLAN.md, section 6-1). Grenades aren't drawn: which one is in the hand can't be
--- told before it is thrown.
+-- from real throws (mods/throwable-arcs/PLAN.md, section 6-1). 1.1.0: also weapons whose round falls, while aimed
+-- (WEAPON_ARCS_PLAN.md), and grenades, while G is held or one in hand is aimed or cooked.
 -- C4's hand pose and mode are read as NarrowHUD by luka189 reads them (Nexus 17882); the armour table comes from HD2
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.20'
+local VERSION = '1.1.0'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -784,7 +784,7 @@ local aim_still = { since = nil, yaw = nil, pitch = nil, t = 0 }   -- since when
 -- (test.20: first person is told by the camera's distance to the weapon in hand, FIRST_PERSON m or less: ~0.3 in first
 -- person, 1.5 or more in third; the camera's distance behind my feet, as until test.19, can be small lying prone. And a
 -- weapon is taken as in hand from HELD_ALONG 0.95, 18 degrees off the camera, not 0.99: worn ones are 0.8 and less)
-local FIRST_PERSON = 0.9
+local FIRST_PERSON, PRONE = 0.9, 0.6
 local HELD_ALONG, HELD_NEAR = 0.95, 2.5
 local held_miss = nil            -- why no weapon was found in hand, for the log
 -- weapon unit kind -> { speed m/s, gravity factor, drag * caliber^2 / mass, lifetime s or false, name }. From the
@@ -959,14 +959,14 @@ end
 local underbarrel_on = (function()
   local TYPES, FIRE_MODE, UB_BUDGET, UB_LOOK = {}, 'if5_pz', 300, 2
   for name in ("@WEAPON_TYPES@"):gmatch('%S+') do TYPES[#TYPES + 1] = name end
-  local session, tried, weapons, next_look, said = nil, {}, {}, 0, {}
+  local session, tried, weapons, next_look = nil, {}, {}, 0
   local function call(name, tag, ...) return chef.call_kind(name, 'ub ' .. tag, ...) end
   return function()
     local gs = call('Network.game_session', 'session')
     if not gs then return false end
     -- (by the world: the session comes back as a new value each call, and test.9 started over every frame, 19,000
     -- "my object is weapon type" lines in a mission)
-    if chef.world_id() ~= session then session, tried, weapons, said = chef.world_id(), {}, {}, {} end
+    if chef.world_id() ~= session then session, tried, weapons = chef.world_id(), {}, {} end
     if now() >= next_look then
       next_look = now() + UB_LOOK
       local peer = call('Network.peer_id', 'peer')
@@ -996,10 +996,6 @@ local underbarrel_on = (function()
       if call('GameSession.game_object_exists', 'exists', gs, g) == true
          and call('GameSession.game_object_is_type', 'type', gs, g, name) == true then
         local fm = read_field(gs, g, name, FIRE_MODE, 'ub fire mode')
-        if said[g] ~= fm then
-          said[g] = fm
-          log('one-two: object %s (type %s) fire mode %s', tostring(g), name, tostring(fm))
-        end
         if type(fm) == 'number' and math.floor(fm / 8) % 2 == 1 then on = true end
       else
         weapons[g], tried[g] = nil, nil
@@ -1034,9 +1030,10 @@ end)()
 -- github.com/shalzuth/HelldiversData; a grenade's speed and drag aren't in that data)
 local grenade = (function()
   local GRENADE_SPEED, GRENADE_LIFT, WALK = 21, 5, 1
-  local GRENADE_HAND, GRENADE_LOW, GRENADE_HIGH, GRENADE_RIGHT = 1.0, 0.6, 2.4, -0.2
+  -- (GRENADE_LOW 0.2: a Melta mine is held low, and 0.6 until test.20 took it for in hand only now and then)
+  local GRENADE_HAND, GRENADE_LOW, GRENADE_HIGH, GRENADE_RIGHT = 1.0, 0.2, 2.4, -0.2
   local GRENADE_FAST, GRENADE_STEADY, GRENADE_FIT, GRENADE_FLY, GRENADE_KEEP = 5, 0.15, 0.3, 2.5, 9
-  local GRENADE_SOON, GRENADE_REACH, GRENADE_OFF = 0.2, 3, 0.15
+  local GRENADE_SOON, GRENADE_REACH, GRENADE_OFF, GRENADE_SKIP = 0.2, 3, 0.15, 1.5
   local SAVE = 'grenade_throws6'  -- (test.12-19's files are not read: learned the wrong things)
   -- drag by kind, from whole flights (test.16: thermite 22 to 18 m/s across over 2 s, Giga 18.7 to 17 over 1.4 s;
   -- test.17: Arc, Melta and Impact kept their speed)
@@ -1153,6 +1150,15 @@ local grenade = (function()
       pts[#pts + 1] = { x, y, z }
       if z < deepest then break end
     end
+    -- drawn from GRENADE_SKIP m off the start: from the hand it was in the way of the view
+    local from = 1
+    while from < #pts - 1 and (pts[from][1] - ox) ^ 2 + (pts[from][2] - oy) ^ 2 + (pts[from][3] - oz) ^ 2
+          < GRENADE_SKIP * GRENADE_SKIP do from = from + 1 end
+    if from > 1 then
+      local out = {}
+      for i = from, #pts do out[#out + 1] = pts[i] end
+      pts = out
+    end
     return pts
   end
 
@@ -1261,6 +1267,7 @@ local grenade = (function()
                                      -- left }; unit -> true while followed
   local GRENADE_THROWN = 10
   local M2 = { on = true }
+  function M2.stop() if watch then watch.stop() end end
   -- called every frame; free: nothing else is drawn. Returns the arc's points, or nil
   function M2.update(c, free)
     local t = now()
@@ -1323,426 +1330,25 @@ local function weapon_aimed(c)
     log('weapon aimed: %s', said)
   end
   if not kind or fp then return nil end
+  -- lying prone (the weapon in hand less than PRONE m above my feet): not drawn; its aim and muzzle aren't measured
+  -- prone (test.20: the arc began off the muzzle and missed, and went away aiming up)
+  local _, _, wz = chef.unit_position(u)
+  if wz and me and wz - me[3] < PRONE then
+    if said_weapon ~= 'prone' then
+      said_weapon = 'prone'
+      log('weapon aimed lying prone: not drawn')
+    end
+    return nil
+  end
   return WEAPONS[kind], muzzle_of(u, WEAPONS[kind]), u, kind
 end
 
--- test.2-3: each shot while a weapon's arc shows, its round is found and, CHECK_AT s after it is first seen, compared
--- with the arc drawn at the click: how far off across the view, and which way it flew against the camera and the
--- barrel. The round: of the units new since the click and first seen within 10 m of the camera, the one gone farthest
--- (test.2 looked only for the probe's five rounds, so the EAT, the GR-8 and the Punisher Plasma went unchecked).
--- (in a block of its own: the file is near Lua 5.1's 200 locals)
-local watch_shots, camera_turn, watch_c4, lab_hook
-do
-local CHECK_AT, CHECK_MOST, CHECK_NEW, CHECK_FAR = 0.3, 0.8, 0.15, 20
-local RUNTIME_BUILT = '46cab355bd8d4d37'   -- asking where one is ends the game
-local check = nil                -- the shot being checked
-local was_throw = false
+-- the camera's turn since the last frame, degrees/s (yaw, pitch): the weapon's aim is learned only while it's still
 local cam_was = nil              -- last frame's camera: { t, yaw, pitch }
-
-function camera_turn(c)
+local function camera_turn(c)
   if not (cam_was and now() > cam_was[1]) then return 0, 0 end
   local dyaw = (math.atan2(c.fy, c.fx) - cam_was[2] + math.pi) % (2 * math.pi) - math.pi
   return math.deg(dyaw) / (now() - cam_was[1]), math.deg(camera_pitch(c) - cam_was[3]) / (now() - cam_was[1])
-end
-
-local function all_units()
-  local w = chef.world()
-  local units = w and chef.call('World.units', w)
-  return type(units) == 'table' and units or {}
-end
-
--- test.6 lab (test only): flights of what is fired or thrown, logged every FLIGHT_EVERY s for FLIGHT_MOST s, to fit
--- the rounds not measured yet and grenades; grenades: what the network and my hand show when one is drawn (key 4) or
--- thrown (G); weapons in my hand not in WEAPONS, by kind.
--- (in a function of its own: Lua 5.1 allows a function 200 locals, and the file is near that)
-local record
-lab_hook, record = (function()
-local FLIGHT_EVERY, FLIGHT_MOST, CATCH_FOR = 0.05, 4, 2
-local flights, flight_n, catches = {}, 0, {}
-
-local function record(u, what, c)
-  flight_n = flight_n + 1
-  local mx, my, mz = my_move()
-  flights[#flights + 1] = { u = u, id = flight_n, t0 = now(), next = 0 }
-  -- (test.10: and which way my body faces, against the camera: test.9's C4 thrown walking sideways flew 25.4 or
-  -- 20.8 m/s, not 22.4, maybe by the body's turn)
-  local body = 'nil'
-  if mine and chef.unit_alive(mine) then
-    local bx, by = chef.unit_rotation(mine)
-    if type(bx) == 'number' then
-      body = string.format('%.4f %.4f (%+.1f deg right of the camera)', bx, by,
-                           -(((math.deg(math.atan2(by, bx) - math.atan2(c.fy, c.fx)) + 180) % 360) - 180))
-    end
-  end
-  log('flight %d: %s, kind %s; camera %.2f %.2f %.2f fwd %.4f %.4f %.4f; feet %s; moving %.2f %.2f %.2f; pose %s; body %s',
-      flight_n, what, tostring(chef.unit_kind(u)), c.x, c.y, c.z, c.fx, c.fy, c.fz,
-      me and string.format('%.2f %.2f %.2f', me[1], me[2], me[3]) or 'nil', mx, my, mz, tostring(hand_pose()), body)
-end
-
-local function follow_flights()
-  local t, keep = now(), {}
-  for _, f in ipairs(flights) do
-    local x, y, z
-    if chef.unit_alive(f.u) then x, y, z = chef.unit_position(f.u) end
-    if x and t - f.t0 < FLIGHT_MOST then
-      keep[#keep + 1] = f
-      if t >= f.next then
-        f.next = t + FLIGHT_EVERY
-        log('flight %d %.3f %.2f %.2f %.2f', f.id, t - f.t0, x, y, z)
-      end
-    else
-      log('flight %d: ended at %.2f s', f.id, t - f.t0)
-    end
-  end
-  flights = keep
-end
-
--- what turns up near me in CATCH_FOR s: each new unit within 10 m that then moves, its flight recorded
-local function start_catch(what, c)
-  local k = { what = what, at = now(), c = c, before = {}, new = {} }
-  for _, r in ipairs(all_units()) do k.before[r] = true end
-  catches[#catches + 1] = k
-  log('catch: %s', what)
-end
-
-local function follow_catches(c)
-  local t, keep = now(), {}
-  for _, k in ipairs(catches) do
-    if t - k.at < CATCH_FOR then
-      keep[#keep + 1] = k
-      for _, r in ipairs(all_units()) do
-        if not k.before[r] then
-          k.before[r] = true
-          local kind = chef.unit_alive(r) and chef.unit_kind(r)
-          if kind and kind ~= RUNTIME_BUILT then
-            local x, y, z = chef.unit_position(r)
-            if x and me and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 + (z - me[3]) ^ 2 < 100 then
-              k.new[#k.new + 1] = { r, x, y, z }
-            end
-          end
-        end
-      end
-      for i = #k.new, 1, -1 do
-        local n = k.new[i]
-        local x, y, z = chef.unit_position(n[1])
-        if x and (x - n[2]) ^ 2 + (y - n[3]) ^ 2 + (z - n[4]) ^ 2 > 1 then
-          record(n[1], k.what, c)
-          table.remove(k.new, i)
-        end
-      end
-    end
-  end
-  catches = keep
-end
-
--- grenades: the Helldiver's network object (NarrowHUD's data: the player type and its avatar field, the avatar type),
--- its declared fields (Network.object_info) logged once, and their values at each grenade event when the info names
--- them (a field is only ever read by a name the game declares for that type: reading another can end the game)
-local PLAYER_TYPE, PLAYER_AVATAR, AVATAR_TYPE, NO_OBJECT = 'un6y1d', 'u4d1h9a', 'vvhx8ga', 32767
-local avatar_info, avatar_said = nil, {}
-local function my_avatar(gs)
-  local peer = chef.call_kind('Network.peer_id', 'lab peer')
-  local mine = peer and chef.call_kind('GameSession.objects_owned_by', 'lab owned', gs, peer)
-  if type(mine) ~= 'table' then return nil end
-  for _, goid in pairs(mine) do
-    if chef.call_kind('GameSession.game_object_exists', 'lab exists', gs, goid) == true
-       and chef.call_kind('GameSession.game_object_is_type', 'lab player', gs, goid, PLAYER_TYPE) == true then
-      local a = read_field(gs, goid, PLAYER_TYPE, PLAYER_AVATAR, 'lab avatar')
-      if type(a) == 'number' and a ~= NO_OBJECT
-         and chef.call_kind('GameSession.game_object_exists', 'lab exists', gs, a) == true
-         and chef.call_kind('GameSession.game_object_is_type', 'lab avatar type', gs, a, AVATAR_TYPE) == true then
-        return a, #mine
-      end
-    end
-  end
-  return nil, #mine
-end
-
-local function show(v)
-  if type(v) == 'table' then
-    local parts = {}
-    for key, x in pairs(v) do parts[#parts + 1] = tostring(key) .. '=' .. tostring(x) end
-    table.sort(parts)
-    return '{' .. table.concat(parts, ' ') .. '}'
-  end
-  return tostring(v)
-end
-
-local function grenade_event(what)
-  local gs = chef.call_kind('Network.game_session', 'lab session')
-  if not gs then log('grenade %s: no game session', what) return end
-  local avatar, owned = my_avatar(gs)
-  log('grenade %s: hand pose %s, my objects %s, my Helldiver object %s', what, tostring(hand_pose()), tostring(owned),
-      tostring(avatar))
-  if not avatar then return end
-  if avatar_info == nil then
-    local ok, info = pcall(chef.call_kind, 'Network.object_info', 'lab objinfo', AVATAR_TYPE)
-    avatar_info = (ok and type(info) == 'table' and type(info.fields) == 'table') and info.fields or false
-    log('grenade: the Helldiver type declares %s fields; the first: %s', avatar_info and #avatar_info or 'no',
-        avatar_info and show(avatar_info[1]) or show(info))
-  end
-  if not avatar_info then return end
-  local parts = {}
-  for i, f in ipairs(avatar_info) do
-    local name = type(f) == 'table' and f.name
-    if type(name) == 'string' then
-      local v = chef.call_kind('GameSession.game_object_field', 'lab field', gs, avatar, name)
-      local text = show(v)
-      if avatar_said[name] ~= text then parts[#parts + 1] = name .. '=' .. text end
-      avatar_said[name] = text
-    elseif i == 1 then
-      log('grenade: the field info has no names; not read')
-      break
-    end
-  end
-  if #parts > 0 then log('grenade %s: Helldiver fields changed: %s', what, table.concat(parts, ' ')) end
-end
-
--- the units on me (within 1.5 m across, 2.5 m up): their kinds, to tell what a pose brings into my hand
-local on_me_said = nil
-local function units_on_me(why)
-  if not me then return end
-  local kinds = {}
-  for _, u in ipairs(all_units()) do
-    local kind = chef.unit_alive(u) and chef.unit_kind(u)
-    if kind and kind ~= RUNTIME_BUILT and kind ~= PLAYER then
-      local x, y, z = chef.unit_position(u)
-      if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 < 2.25 and z > me[3] - 0.5 and z < me[3] + 2.5 then kinds[kind] = true end
-    end
-  end
-  local now_set = {}
-  for kind in pairs(kinds) do now_set[#now_set + 1] = kind end
-  table.sort(now_set)
-  if on_me_said then
-    local was, came, went = {}, {}, {}
-    for _, kind in ipairs(on_me_said) do was[kind] = true end
-    for _, kind in ipairs(now_set) do if not was[kind] then came[#came + 1] = kind end end
-    for _, kind in ipairs(on_me_said) do if not kinds[kind] then went[#went + 1] = kind end end
-    log('on me at %s: came %s; went %s', why, table.concat(came, ' '), table.concat(went, ' '))
-  else
-    log('on me at %s: %s', why, table.concat(now_set, ' '))
-  end
-  on_me_said = now_set
-end
-
--- a weapon in my hand that isn't in WEAPONS: the unit near me that points the way the camera looks
-local unknown_said, unknown_next = {}, 0
-local function unknown_weapon(c)
-  if not me or now() < unknown_next then return end
-  unknown_next = now() + 1
-  -- (test.10: every one, with where it is: test.9 stopped at the first, a worn piece and a reverb volume, and the Epoch
-  -- in hand was never named)
-  local first
-  for _, u in ipairs(all_units()) do
-    local kind = chef.unit_alive(u) and chef.unit_kind(u)
-    if kind and kind ~= RUNTIME_BUILT and kind ~= PLAYER and not WEAPONS[kind] then
-      local x, y, z = chef.unit_position(u)
-      if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 < 2.25 then
-        local fx, fy, fz = chef.unit_rotation(u)
-        if type(fx) == 'number' and fx * c.fx + fy * c.fy + fz * c.fz >= HELD_ALONG then
-          if not unknown_said[kind] then
-            unknown_said[kind] = true
-            log('unknown weapon aimed: kind %s, %.2f m across from my feet, %.2f m up', kind,
-                math.sqrt((x - me[1]) ^ 2 + (y - me[2]) ^ 2), z - me[3])
-          end
-          first = first or kind
-        end
-      end
-    end
-  end
-  if first then return first end
-end
-
-local lab_keys, lab_pose, lab_left, lab_unknown = {}, nil, false, nil
-local function lab(c, weapon_drawn)
-  for _, key in ipairs({ '4', 'g' }) do
-    local d = chef.key_down(key) == true
-    if d and not lab_keys[key] then
-      grenade_event('key ' .. key)
-      if key == 'g' then start_catch('grenade (G)', c) end
-    end
-    lab_keys[key] = d
-  end
-  local pose = hand_pose()
-  if pose ~= lab_pose then
-    -- (test.10: every change: test.9's key 4 showed no grenade pose)
-    log('hand pose %s -> %s (a stratagem ball held: %s)', tostring(lab_pose), tostring(pose), tostring(ball ~= nil))
-    if pose == 40 or pose == 41 or lab_pose == 40 or lab_pose == 41 then units_on_me('pose ' .. tostring(pose)) end
-    if pose == 40 or pose == 41 then grenade_event('pose ' .. pose) end
-    lab_pose = pose
-  end
-  local left = throw_down
-  if left and not lab_left then
-    if (pose == 40 or pose == 41) and not ball then
-      start_catch('grenade (thrown from the hand)', c)
-    elseif aim_down and not weapon_drawn and lab_unknown then
-      start_catch('shot of unknown weapon ' .. lab_unknown, c)
-    end
-  end
-  lab_left = left
-  if aim_down and not weapon_drawn and pose ~= 40 and pose ~= 41 and pose ~= C4_GRIP then
-    lab_unknown = unknown_weapon(c) or lab_unknown
-  elseif not aim_down then
-    lab_unknown = nil
-  end
-  follow_catches(c)
-  follow_flights()
-end
-return lab, record
-end)()
-
-local function start_check(c, w, u, aim, muzzle)
-  local mx, my = my_move()
-  local turn, nod = camera_turn(c)
-  local fx, fy, fz = chef.unit_rotation(u)
-  local before = {}
-  for _, r in ipairs(all_units()) do before[r] = true end
-  check = { at = now(), c = { x = c.x, y = c.y, z = c.z, fx = c.fx, fy = c.fy, fz = c.fz }, w = w, mx = mx, my = my,
-            aim = aim, muzzle = muzzle, turn = turn, nod = nod, barrel = type(fx) == 'number' and { fx, fy, fz } or nil,
-            before = before, new = {} }
-end
-
-local function yaw_pitch(x, y, z) return math.deg(math.atan2(y, x)), math.deg(math.atan2(z, math.sqrt(x * x + y * y))) end
-
-local function follow_check()
-  local k = check
-  if not k then return end
-  local t = now()
-  if t - k.at > CHECK_MOST then
-    log('shot check %s: %s', k.w[5], k.round and 'lost the round' or 'no round seen')
-    check = nil
-    return
-  end
-  if not k.round then
-    if t - k.at <= CHECK_NEW then
-      for _, r in ipairs(all_units()) do
-        if not k.before[r] then
-          k.before[r] = true
-          local kind = chef.unit_alive(r) and chef.unit_kind(r)
-          if kind and kind ~= RUNTIME_BUILT then
-            local x, y, z = chef.unit_position(r)
-            if x and (x - k.c.x) ^ 2 + (y - k.c.y) ^ 2 + (z - k.c.z) ^ 2 < 100 then
-              k.new[#k.new + 1] = { r, kind, t, x, y, z }
-            end
-          end
-        end
-      end
-      return
-    end
-    local best, far = nil, 1
-    for _, n in ipairs(k.new) do
-      local x, y, z = chef.unit_position(n[1])
-      local d = x and chef.unit_alive(n[1]) and (x - n[4]) ^ 2 + (y - n[5]) ^ 2 + (z - n[6]) ^ 2
-      if d and d > far then best, far = n, d end
-    end
-    if not best then
-      log('shot check %s: no round seen (%d new units near)', k.w[5], #k.new)
-      check = nil
-      return
-    end
-    k.round, k.kind, k.first = best[1], best[2], { best[3], best[4], best[5], best[6] }
-    record(k.round, 'shot ' .. k.w[5], k.c)
-  end
-  -- (a fast round only CHECK_FAR m on: test.3's GR-8 rounds were gone by 0.3 s)
-  if t - k.first[1] < math.min(CHECK_AT, CHECK_FAR / k.w[1]) then return end
-  local x, y, z = chef.unit_position(k.round)
-  if not (x and chef.unit_alive(k.round)) then
-    log('shot check %s: the round went too soon', k.w[5])
-    check = nil
-    return
-  end
-  -- the arc's point nearest the round, flown from the click
-  local c, w = k.c, k.w
-  local px, py, pz, vx, vy, vz = launch(c, w, k.mx, k.my, k.aim, k.muzzle)
-  local best, bx, by, bz = math.huge
-  for _ = 1, math.floor((t - k.at + 0.3) / WEAPON_STEP) do
-    px, py, pz, vx, vy, vz = fly(w, px, py, pz, vx, vy, vz)
-    local d = (px - x) ^ 2 + (py - y) ^ 2 + (pz - z) ^ 2
-    if d < best then best, bx, by, bz = d, px, py, pz end
-  end
-  local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
-  local hx, hy = c.fx / fh, c.fy / fh
-  local dx, dy, dz = x - bx, y - by, z - bz
-  local ry, rp = yaw_pitch(x - k.first[2], y - k.first[3], z - k.first[4])
-  local cy, cp = yaw_pitch(c.fx, c.fy, c.fz)
-  local by_, bp = cy, cp
-  if k.barrel then by_, bp = yaw_pitch(k.barrel[1], k.barrel[2], k.barrel[3]) end
-  log('shot check %s (round %s, aimed by %s): moving %.1f ahead %.1f right, turning %.0f deg/s right %.0f up; at %.0f m'
-      .. ' the round is %.2f m right %.2f m up of the arc; it flew %+.2f deg right %+.2f up of the camera (the barrel:'
-      .. ' %+.2f, %+.2f)', w[5], k.kind, k.aim and 'the weapon' or 'the camera', k.mx * hx + k.my * hy,
-      k.mx * hy - k.my * hx, -k.turn, k.nod,
-      math.sqrt((x - c.x) ^ 2 + (y - c.y) ^ 2 + (z - c.z) ^ 2), dx * hy - dy * hx, dz,
-      -(((ry - cy + 180) % 360) - 180), rp - cp, -(((ry - by_ + 180) % 360) - 180), rp - bp)
-  check = nil
-end
-
--- test.2: called every frame with the weapon drawn this frame (or nil)
-function watch_shots(c, w, u, aim, muzzle)
-  local down = throw_down
-  if down and not was_throw and w and u then start_check(c, w, u, aim, muzzle) end
-  was_throw = down
-  cam_was = { now(), math.atan2(c.fy, c.fx), camera_pitch(c) }
-  follow_check()
-end
-
--- test.5: each C4 throw, the charge (a new unit of C4_CHARGE) is compared C4_AT s after it is first seen with the arc
--- as drawn on the hold's last frame: does walking sideways carry it (1.0.3-test.1 found it didn't)?
-local C4_CHARGE, C4_AT = '9b75217d8312dd67', 0.25
-local c4_check = nil
-function watch_c4(c, h)
-  local k = c4_check
-  if h and h.c4 then
-    if not k or k.done then
-      k = { before = {} }
-      for _, r in ipairs(all_units()) do k.before[r] = true end
-      c4_check = k
-    end
-    local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
-    k.pts, k.at = path(c, true, release_point(c, h.unit, true, h.off)), now()
-    k.mx, k.my = my_move()
-    k.hx, k.hy = c.fx / fh, c.fy / fh
-    k.cx, k.cy, k.cz = c.x, c.y, c.z
-    return
-  end
-  if not k or k.done then return end
-  local t = now()
-  if t - k.at > 1 then
-    log('c4 check: %s', k.charge and 'the charge went' or 'no charge seen')
-    k.done = true
-    return
-  end
-  if not k.charge then
-    for _, r in ipairs(all_units()) do
-      if not k.before[r] then
-        k.before[r] = true
-        if chef.unit_alive(r) and chef.unit_kind(r) == C4_CHARGE then
-          k.charge, k.first = r, t
-          record(r, 'c4', c)
-        end
-      end
-    end
-    return
-  end
-  if t - k.first < C4_AT then return end
-  local x, y, z = chef.unit_position(k.charge)
-  if not (x and chef.unit_alive(k.charge)) then return end
-  -- the nearest point on the arc's segments
-  local best, bx, by, bz = math.huge
-  for i = 2, #k.pts do
-    local p, q = k.pts[i - 1], k.pts[i]
-    local dx, dy, dz = q[1] - p[1], q[2] - p[2], q[3] - p[3]
-    local l2 = dx * dx + dy * dy + dz * dz
-    local f = l2 > 0 and math.max(0, math.min(1, ((x - p[1]) * dx + (y - p[2]) * dy + (z - p[3]) * dz) / l2)) or 0
-    local ax, ay, az = p[1] + dx * f, p[2] + dy * f, p[3] + dz * f
-    local d = (x - ax) ^ 2 + (y - ay) ^ 2 + (z - az) ^ 2
-    if d < best then best, bx, by, bz = d, ax, ay, az end
-  end
-  local hx, hy = k.hx, k.hy
-  log('c4 check: moving %.1f ahead %.1f right; at %.0f m the charge is %.2f m right %.2f m up of the arc',
-      k.mx * hx + k.my * hy, k.mx * hy - k.my * hx, math.sqrt((x - k.cx) ^ 2 + (y - k.cy) ^ 2 + (z - k.cz) ^ 2),
-      (x - bx) * hy - (y - by) * hx, z - bz)
-  k.done = true
-end
 end
 
 -- ------------------------------------------------------------------ C4's mode by the crosshair
@@ -1909,9 +1515,7 @@ function M.update(dt)
     aim = weapon_aim(c, weapon_kind, weapon_unit, math.sqrt(turn * turn + nod * nod) >= AIMING.STILL_TURN)
   end
   local nade = grenade.update(c, not (aiming or c4_aim or h or weapon))
-  watch_shots(c, weapon, weapon_unit, aim, muzzle)
-  watch_c4(c, h)
-  lab_hook(c, weapon ~= nil)
+  cam_was = { now(), math.atan2(c.fy, c.fx), camera_pitch(c) }
   if aiming then
     draw_arc(c, false, release_point(c, ball, false))
   elseif c4_aim then
@@ -1933,6 +1537,7 @@ function M.shutdown()
   if vehicle_watch then vehicle_watch.stop() end
   if ball_watch then ball_watch.stop() end
   if weapon_watch then weapon_watch.stop() end
+  grenade.stop()
 end
 
 return M

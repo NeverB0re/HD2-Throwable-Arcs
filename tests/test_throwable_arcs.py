@@ -404,69 +404,7 @@ class ArcTest(unittest.TestCase):
         self.frames(1)
         self.assertEqual(self.lines(), [])
 
-    def test_a_c4_throw_is_checked_against_the_arc(self):
-        det = self.c4_in_hand()
-        self.fake["mouse"]["right"] = True
-        self.frames(5)
-        self.lua.eval("function(u) u.x = 0.42 end")(det)
-        self.frames(2)
-        self.fake["mouse"]["left"] = True
-        self.frames(8)                              # the hold: its arc as on the last frame
-        mid = self.lines()[60]
-        self.frames(2)                              # the hold over
-        # the charge turns up 0.3 m right of the arc (right: -y, the camera looking along +x) and stays there
-        self.add_unit("9b75217d8312dd67", mid[0], mid[1] - 0.3, mid[2])
-        self.frames(30)
-        self.assertRegex(self.logs(), r"c4 check: moving 0\.0 ahead 0\.0 right; at \d+ m the charge is 0\.(2[6-9]|3[0-4]) m right "
-                                      r"-?0\.0\d m up of the arc")
-
     # ------------------------------------------------------------------ test.6 lab
-    def test_a_thrown_grenade_is_recorded(self):
-        self.fake["down"]["g"] = True
-        self.frames(2)
-        nade = self.add_unit("5c14f27759dd3be0", 0.3, -0.3, 1.5)
-        self.lua.eval("function(f, n) f.nade_fly = function() n.x = n.x + 0.35 end end")(self.fake, nade)
-        for _ in range(10):
-            self.fake.nade_fly()
-            self.frames(1)
-        logs = self.logs()
-        self.assertIn("grenade key g: no game session", logs)
-        self.assertIn("flight 1: grenade (G), kind 5c14f27759dd3be0", logs)
-        self.assertRegex(logs, r"flight 1 0\.\d+ \d+\.\d\d -0\.30 1\.50")
-
-    def test_grenade_fields_are_read_by_their_declared_names(self):
-        self.lua.eval("""function(f)
-          f.E['Network.game_session'] = function() return 'gs' end
-          f.E['Network.peer_id'] = function() return 'me' end
-          f.E['GameSession.objects_owned_by'] = function() return { 11, 12 } end
-          f.E['GameSession.game_object_exists'] = function(gs, g) return true end
-          f.E['GameSession.game_object_is_type'] = function(gs, g, t) return (g == 11 and t == 'un6y1d') or (g == 7 and t == 'vvhx8ga') end
-          f.E['GameSession.game_object_field'] = function(gs, g, name)
-            if g == 11 and name == 'u4d1h9a' then return 7 end
-            if g == 7 and name == 'du7kbt' then return f.nades end
-            if g == 7 and name == 'xx1' then return 3 end
-            error('NATIVE CRASH: an undeclared field')
-          end
-          f.E['Network.object_info'] = function(t)
-            if t == 'un6y1d' then return { fields = { { id = '0f27c68e' } } } end
-            return { fields = { { id = 'a1', name = 'du7kbt' }, { id = 'b2', name = 'xx1' } } }
-          end
-          f.nades = 4
-        end""")(self.fake)
-        self.fake["down"]["4"] = True
-        self.frames(2)
-        self.fake["down"]["4"] = False
-        self.fake.nades = 3
-        self.frames(2)
-        self.fake["down"]["4"] = True
-        self.frames(2)
-        logs = self.logs()
-        self.assertIn("grenade key 4: hand pose nil, my objects 2, my Helldiver object 7", logs)
-        self.assertIn("the Helldiver type declares 2 fields", logs)
-        self.assertIn("Helldiver fields changed: du7kbt=4 xx1=3", logs)
-        self.assertIn("Helldiver fields changed: du7kbt=3", logs)
-        self.assertNotIn("NATIVE CRASH", logs)
-
     def test_the_one_two_draws_only_with_its_grenade_launcher(self):
         with open(os.path.join(HERE, "..", "src", "weapon_types.lua"), encoding="utf-8") as f:
             third = re.search(r"\[\[\s*(\S+)\s+(\S+)\s+(\S+)", f.read()).group(3)
@@ -491,17 +429,9 @@ class ArcTest(unittest.TestCase):
         self.assertGreater(len(self.lines()), 20)
         logs = self.logs()
         self.assertIn("one-two: my object 6 is weapon type " + third, logs)
-        self.assertIn("one-two: object 6 (type %s) fire mode 9" % third, logs)
         self.assertIn("weapon aimed: AR/GL-21 One-Two (its grenade launcher)", logs)
         self.assertNotIn("NATIVE CRASH", logs)
         self.assertEqual(logs.count("one-two: my object 6 is weapon type"), 1, "found once, not every frame")
-
-    def test_an_unknown_weapon_aimed_is_named(self):
-        self.weapon_in_hand("abcdefabcdefabcd")
-        self.fake["mouse"]["right"] = True
-        self.frames(3)
-        self.assertIn("unknown weapon aimed: kind abcdefabcdefabcd,", self.logs())
-        self.assertEqual(self.lines(), [])
 
     def plug_pad(self):
         """a controller on Pad1: buttons a, left_trigger, right_trigger; fake.pad holds each button's value"""
@@ -1131,32 +1061,6 @@ class ArcTest(unittest.TestCase):
         self.assertAlmostEqual(down[0], want, delta=3)
         self.assertLess(want, 0.6 * self.flight(100, 1, 0, 10, (muzzle[0], muzzle[2])))
 
-    def test_a_shot_is_checked_against_the_arc(self):
-        p, wp = math.radians(10), math.radians(11.5)
-        self.weapon_in_hand(self.GL, f=(math.cos(wp), 0, math.sin(wp)))
-        self.fake.look(10)
-        self.fake["mouse"]["right"] = True
-        self.frames(3)
-        self.fake["mouse"]["left"] = True
-        self.frames(1)
-        # the round, a frame later: flies from the muzzle at 10 degrees, 0.1 m higher
-        rnd = self.add_unit("a6cd8a90185b6567", 0, 0, 0)
-        self.lua.eval("""function(f, r, t0, p, wp)
-          f.round_fly = function()
-            local t = f.t - t0
-            r.x = 1.8 + 0.45 * math.cos(wp) + 98 * math.cos(p) * t
-            r.y = -0.2
-            r.z = 1.2 + 0.45 * math.sin(wp) + 98 * math.sin(p) * t - 4.9 * t * t + 0.1
-          end
-          f.round_fly()
-        end""")(self.fake, rnd, self.fake.t, p, wp)
-        for _ in range(40):
-            self.fake.round_fly()
-            self.frames(1)
-        self.assertRegex(self.logs(), r"shot check GL-21 Grenade Launcher \(round a6cd8a90185b6567, aimed by the weapon\): "
-                                      r"moving 0\.0 ahead 0\.0 right, turning -?0 deg/s right -?0 up; at \d+ m the round "
-                                      r"is -?0\.\d\d m right -?0\.\d\d m up of the arc")
-
     def arc_end(self):
         return max(self.lines(), key=lambda l: l[3])
 
@@ -1201,6 +1105,14 @@ class ArcTest(unittest.TestCase):
         self.frames(3)
         self.assertEqual(self.lines(), [])
         self.assertIn("weapon aimed: GL-21 Grenade Launcher (first person: not drawn)", self.logs())
+
+    def test_no_weapon_arc_lying_prone(self):
+        gl = self.weapon_in_hand(self.GL)
+        self.lua.eval("function(u) u.z = 0.4 end")(gl)     # prone: the weapon low by my feet
+        self.fake["mouse"]["right"] = True
+        self.frames(3)
+        self.assertEqual(self.lines(), [])
+        self.assertIn("weapon aimed lying prone: not drawn", self.logs())
 
     def test_a_worn_weapon_draws_nothing(self):
         self.weapon_in_hand(self.GL, f=(0, 0, -1))      # on my back, pointing down
