@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.18'
+local VERSION = '1.1.0-test.19'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -1005,28 +1005,34 @@ end)()
 -- 1.1.0: grenades. The grenade in my hand is a unit of its own kind (test.13 on), so it is told by its kind, from the
 -- game's throwables (THROWABLES, filediver's names): one within GRENADE_HAND m across and GRENADE_LOW to GRENADE_HIGH
 -- m above my feet. While one is in my hand and G (the game keeps it in hand until G is let go, "cooking"), left (cooking
--- one drawn with its key) or right (aiming it) is held, its arc: from the grenade RELEASE_UP above it and GRENADE_RIGHT
--- across (test.16: the flight starts 0.15-0.25 m left of the hand), its kind's lift over the camera, at its kind's speed,
--- slowed by its kind's drag (a = -drag |v| v: test.16-17, thermite and Giga slow down, Arc and Melta don't), my walk
--- along the aim added (test.15) and the throw-range perks. No grenade in hand: no arc (test.17 drew one from the air when
--- G had none to throw). Guided kinds: no arc.
+-- one drawn with its key) or right (aiming it) is held, its arc, as its kind is thrown: from where its throws start
+-- (from my feet, along and across my heading), turned its kind's yaw from the camera's heading, its kind's lift over the
+-- camera, at its kind's speed (my walk along the aim added, test.15, and the throw-range perks), slowed by its kind's
+-- DRAG (a = -drag |v| v). No grenade in hand: no arc (test.17 drew one from the air when G had none to throw). Guided
+-- kinds: no arc.
 -- Each kind's throw is learned from its flights, kept across launches (chef.save_table): the grenade that leaves my hand
--- (that unit itself, followed) is measured over its free flight: from the first step after it leaves the hand that
--- runs at GRENADE_FAST m/s or more and steady (within GRENADE_STEADY of the next: the frames it jumps from the hand to
--- its path run 25-35 m/s), until it lands (a step at less than half the one before) or GRENADE_FLY s. Speed and lift
--- from its first GRENADE_FIT s (least squares, falling at GRAVITY), drag from how its speed across falls over a flight of
--- GRENADE_DRAG_FOR s or more. Standing and walking (WALK m/s along the aim or more: the game's own deadzone for a
--- thrower's velocity, "thrower_velocity_deadzone", is 1) lifts apart (test.15: Gigas 3 degrees standing, 6-16
--- walking). Each value is the median of its last GRENADE_KEEP measurements (with the measured ones to start), so one odd
--- throw doesn't move it. A kind not measured yet is drawn with GRENADE_SPEED, GRENADE_LIFT and no drag.
+-- (that unit, followed) is measured over its free flight, from the first step after it leaves the hand at GRENADE_FAST
+-- m/s or more and steady (within GRENADE_STEADY of the next: the frames it jumps from the hand to its path run 25-35
+-- m/s), for GRENADE_FIT s or until it lands (a step at less than half the one before): least squares, falling at
+-- GRAVITY (and DRAG). Its start: that path back at the frame it left my hand, from my feet then. Standing and walking
+-- (WALK m/s along the aim or more: the game's own deadzone for a thrower's velocity, "thrower_velocity_deadzone", is 1)
+-- lifts apart (test.15: Gigas 3 degrees standing, 6-16 walking). Each value is the median of its last GRENADE_KEEP
+-- measurements (with the measured ones to start), so one odd throw doesn't move it. Not measured yet: GRENADE_SPEED,
+-- GRENADE_LIFT, no yaw, from the grenade in hand RELEASE_UP above it and GRENADE_RIGHT across.
+-- test.19: drag is no longer learned (test.18's, from the speed across at a flight's start and end, ran 0.0001-0.35:
+-- landings and bounces in it) but fixed, from whole flights; the start and yaw are (test.18: a Melta mine is thrown from
+-- 0.8 m up, 0.5 m right of the hand, an Arc grenade 0.3 m right of my feet: the arc from the hand was off).
 -- Keys rebound in the game aren't followed.
 -- (lift: the game's "throw_angle_offset" is 5 degrees, in the Helldiver's AvatarComponent data dumped in
 -- github.com/shalzuth/HelldiversData; a grenade's speed and drag aren't in that data)
 local grenade = (function()
   local GRENADE_SPEED, GRENADE_LIFT, WALK = 21, 5, 1
   local GRENADE_HAND, GRENADE_LOW, GRENADE_HIGH, GRENADE_RIGHT = 1.0, 0.6, 2.4, -0.2
-  local GRENADE_FAST, GRENADE_STEADY, GRENADE_FIT, GRENADE_FLY, GRENADE_DRAG_FOR, GRENADE_KEEP = 5, 0.15, 0.3, 2.5, 0.6, 9
-  local SAVE = 'grenade_throws4'  -- (test.12-17's files are not read: learned the wrong things)
+  local GRENADE_FAST, GRENADE_STEADY, GRENADE_FIT, GRENADE_FLY, GRENADE_KEEP = 5, 0.15, 0.3, 2.5, 9
+  local SAVE = 'grenade_throws5'  -- (test.12-18's files are not read: learned the wrong things)
+  -- drag by kind, from whole flights (test.16: thermite 22 to 18 m/s across over 2 s, Giga 18.7 to 17 over 1.4 s;
+  -- test.17: Arc, Melta and Impact kept their speed)
+  local DRAG = { ['c5c05fcb5747c799'] = 0.0053, ['46333fc9e3d4bd34'] = 0.004 }
   -- the game's throwables (content/fac_helldivers/equipment/throwables/*), not their parts (a frag's spoon, caltrops'
   -- effect and the caltrops themselves)
   local THROWABLES = {}
@@ -1039,23 +1045,24 @@ local grenade = (function()
   -- guided ones: no arc (they steer themselves once thrown); nothing learned
   local GUIDED = { ['2d398d1ec35e0838'] = true,       -- throwables/self_destruct_drone (G-50 Seeker)
                    ['8e325c933e55bf62'] = true }      -- throwables/at_self_destruct_drone (G-60 Anti-Tank Seeker)
-  -- kind -> { speed = {...}, lift = {...}, walk = {...}, drag = {...} }: the last measurements, from testing to start
+  local FIELDS = { 'speed', 'lift', 'walk', 'yaw', 'ahead', 'right', 'up' }
+  -- kind -> { field = { the last measurements } }, from testing to start (speeds and lifts as test.16-18 measured
+  -- them; starts and yaws from test.18 where it had them)
   local known = {
-    ['c5c05fcb5747c799'] = { speed = { 22.6, 23.3, 23.5 }, lift = { 7.0, 6.5, 5.4 }, walk = { 7.6, 6.6 },
-                             drag = { 0.0053 } },               -- throwables/sticky_grenade (G-123 Thermite), test.16-17
-    ['46333fc9e3d4bd34'] = { speed = { 17.0, 17.7, 17.6 }, lift = { 4.3, 6.4, 6.9 }, walk = { 4.1, 4.8 },
-                             drag = { 0.004 } },                -- throwables/at_explosive_grenade (G-48 Giga), test.16-17
-    ['db922a7afc42894b'] = { speed = { 22.3, 22.2 }, lift = { 4.2, 4.2 }, walk = { 6.3 },
-                             drag = { 0 } },                    -- throwables/arc_grenade (G-31 Arc), test.17
-    ['ee4c107b941ab7f4'] = { speed = { 11.5, 10.5 }, lift = { 1.5 }, drag = { 0 } },   -- mine_shark (G/40-K Melta), test.17
-    ['7686544f539bb9b7'] = { speed = { 22.4 }, lift = { 4.2 }, drag = { 0 } },  -- throwables/impact_grenade (G-16), test.15
+    ['c5c05fcb5747c799'] = { speed = { 22.6, 23.3, 23.5 }, lift = { 7.0, 6.5, 5.4 }, walk = { 7.6, 6.6 } },  -- Thermite
+    ['46333fc9e3d4bd34'] = { speed = { 17.0, 17.7, 17.6 }, lift = { 4.3, 6.4, 6.9 }, walk = { 4.1, 4.8 } },  -- G-48 Giga
+    ['db922a7afc42894b'] = { speed = { 22.3, 22.5, 22.2 }, lift = { 3.2, 3.2, 3.4 }, walk = { 4.5, 4.6 },  -- G-31 Arc
+                             yaw = { 0 }, ahead = { 0.1 }, right = { 0.3 }, up = { 1.5 } },
+    ['ee4c107b941ab7f4'] = { speed = { 10.5, 10.5 }, lift = { 1.2, 4.5 }, walk = { 3.3, 4.3 },      -- G/40-K Melta mine
+                             yaw = { 0 }, ahead = { 1.3 }, right = { 0.74 }, up = { 0.8 } },
+    ['7686544f539bb9b7'] = { speed = { 22.4 }, lift = { 4.2 } },                                     -- G-16 Impact
   }
   local saved = chef.load_table and chef.load_table(SAVE)
   if type(saved) == 'table' and type(saved.known) == 'table' then
     for kind, v in pairs(saved.known) do
       if THROWABLES[kind] and type(v) == 'table' then
         local k = {}
-        for _, field in ipairs({ 'speed', 'lift', 'walk', 'drag' }) do
+        for _, field in ipairs(FIELDS) do
           local l = {}
           for _, x in ipairs(type(v[field]) == 'table' and v[field] or {}) do
             if type(x) == 'number' then l[#l + 1] = x end
@@ -1078,11 +1085,11 @@ local grenade = (function()
   end
 
   -- the grenade in my hand: its unit and kind, or nil
-  local function in_hand()
+  local function in_hand(skip)
     if not (watch and me) then return nil end
     local best, kind, bd
     for _, it in ipairs(watch.items) do
-      if chef.unit_alive(it.unit) then
+      if chef.unit_alive(it.unit) and not skip[it.unit] then
         local x, y, z = chef.unit_position(it.unit)
         if x then
           local d = (x - me[1]) ^ 2 + (y - me[2]) ^ 2
@@ -1099,21 +1106,28 @@ local grenade = (function()
   -- the arc, as path() draws a stratagem ball's, with drag
   local function arc(c, u, kind)
     if GUIDED[kind] then return nil end
-    local ox, oy, oz = chef.unit_position(u)
-    if not ox then return nil end
-    oz = oz + RELEASE_UP
     local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
     local hx, hy = 0, 1
     if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
-    ox, oy = ox + hy * GRENADE_RIGHT, oy - hx * GRENADE_RIGHT
-    local mx, my = my_move()
     local k = known[kind] or {}
+    local ahead, right, up = median(k.ahead), median(k.right), median(k.up)
+    local ox, oy, oz
+    if ahead and right and up and me then
+      ox, oy, oz = me[1] + hx * ahead + hy * right, me[2] + hy * ahead - hx * right, me[3] + up
+    else
+      ox, oy, oz = chef.unit_position(u)
+      if not ox then return nil end
+      ox, oy, oz = ox + hy * GRENADE_RIGHT, oy - hx * GRENADE_RIGHT, oz + RELEASE_UP
+    end
+    local mx, my = my_move()
     local along = mx * hx + my * hy
+    local yaw = math.rad(median(k.yaw) or 0)       -- (+: right)
+    local dx, dy = hx * math.cos(yaw) + hy * math.sin(yaw), hy * math.cos(yaw) - hx * math.sin(yaw)
     local s = (median(k.speed) or GRENADE_SPEED) * speed_up(false) + along
     local lift = (math.abs(along) >= WALK and median(k.walk)) or median(k.lift) or GRENADE_LIFT
-    local drag = median(k.drag) or 0
+    local drag = DRAG[kind] or 0
     local pitch = camera_pitch(c) + math.rad(lift)
-    local vx, vy, vz = hx * s * math.cos(pitch), hy * s * math.cos(pitch), s * math.sin(pitch)
+    local vx, vy, vz = dx * s * math.cos(pitch), dy * s * math.cos(pitch), s * math.sin(pitch)
     local deepest = (feet_z or (c.z - 2)) - DEEPEST
     local pts, t, x, y, z = { { ox, oy, oz } }, 0, ox, oy, oz
     while t < MOST_T do
@@ -1131,7 +1145,8 @@ local grenade = (function()
     return pts
   end
 
-  -- a throw from the grenade's positions after it left my hand: speed, lift, drag (any may be nil)
+  -- a throw from the grenade's positions after it left my hand: speed, lift, yaw, and where it started from my feet
+  -- (ahead, right, up), or nil
   local function measure(f)
     local p = f.pts
     local v = {}                                -- each step's speed
@@ -1148,17 +1163,12 @@ local grenade = (function()
       end
     end
     if not first then return nil end
-    local last = first
-    for i = first + 1, #p do
-      if v[i] < 0.5 * v[i - 1] or p[i][1] - p[first][1] > GRENADE_FLY then break end
-      last = i
-    end
-    -- speed and lift over the first GRENADE_FIT s
+    -- least squares over the first GRENADE_FIT s: straight across, falling at GRAVITY
     local t0 = p[first][1]
     local n, st, stt, sx, sy, sz, stx, sty, stz = 0, 0, 0, 0, 0, 0, 0, 0, 0
-    for i = first, last do
+    for i = first, #p do
       local t = p[i][1] - t0
-      if t > GRENADE_FIT then break end
+      if t > GRENADE_FIT or (i > first and v[i] < 0.5 * v[i - 1]) then break end
       local z = p[i][4] + 0.5 * GRAVITY * t * t
       n, st, stt = n + 1, st + t, stt + t * t
       sx, sy, sz, stx, sty, stz = sx + p[i][2], sy + p[i][3], sz + z, stx + t * p[i][2], sty + t * p[i][3], stz + t * z
@@ -1166,25 +1176,24 @@ local grenade = (function()
     local den = n * stt - st * st
     if n < 4 or den <= 0 then return nil end
     local vx, vy, vz = (n * stx - st * sx) / den, (n * sty - st * sy) / den, (n * stz - st * sz) / den
+    local x0, y0, z0 = (sx - vx * st) / n, (sy - vy * st) / n, (sz - vz * st) / n
     local h = math.sqrt(vx * vx + vy * vy)
     if h < 1e-6 then return nil end
-    -- drag, from the speed across at the start and the end of a long enough flight
-    local drag
-    local span = p[last][1] - t0
-    if span >= GRENADE_DRAG_FOR and last - first >= 6 then
-      local function across(a, b)
-        return math.sqrt((p[b][2] - p[a][2]) ^ 2 + (p[b][3] - p[a][3]) ^ 2) / (p[b][1] - p[a][1])
-      end
-      local h1, h2 = across(first, first + 3), across(last - 3, last)
-      local dt = (p[last][1] + p[last - 3][1]) / 2 - (p[first][1] + p[first + 3][1]) / 2
-      -- (across only: 1/h grows by drag * |v| / h * dt; |v| / h about 1 for these flat throws)
-      drag = math.max(0, (1 / h2 - 1 / h1) / dt)
-    end
-    -- the fit's speed is about GRENADE_FIT / 2 s in: back to the start; my walk along the throw off (drawn back on)
-    local r = 1 + (drag or 0) * math.sqrt(h * h + vz * vz) * GRENADE_FIT / 2
-    h, vz = h * r - (f.mx * vx + f.my * vy) / h, vz * r
-    if h <= 0 then return nil end
-    return math.sqrt(h * h + vz * vz) / f.up, math.deg(math.atan2(vz, h)) - f.pitch, drag
+    -- the start: that path back at the last frame it was in my hand, from my feet then
+    local tb = f.left - t0
+    local bx, by, bz = x0 + vx * tb, y0 + vy * tb, z0 + vz * tb - 0.5 * GRAVITY * tb * tb
+    local hx, hy = f.hx, f.hy
+    local dx, dy = bx - f.feet[1], by - f.feet[2]
+    -- my walk along the throw off (the arc adds it back), not across
+    local along = (f.mx * vx + f.my * vy) / h
+    local yaw = math.deg(math.atan2(vx * hy - vy * hx, vx * hx + vy * hy))
+    -- a kind with drag: the fit's speed is about GRENADE_FIT / 2 s in, back to the start
+    local r = 1 + (DRAG[f.kind] or 0) * math.sqrt(h * h + vz * vz) * GRENADE_FIT / 2
+    local ha = h * r - along
+    vz = vz * r
+    if ha <= 0 then return nil end
+    return math.sqrt(ha * ha + vz * vz) / f.up, math.deg(math.atan2(vz, ha)) - f.pitch, yaw,
+           dx * hx + dy * hy, dx * hy - dy * hx, bz - f.feet[3]
   end
 
   local function remember(list, x)
@@ -1194,53 +1203,71 @@ local grenade = (function()
 
   local function learn(f)
     if GUIDED[f.kind] then return end
-    local s, lift, drag = measure(f)
+    local s, lift, yaw, ahead, right, up = measure(f)
     if not s then
       log('grenade %s thrown: no steady flight to measure (%d positions)', f.kind, #f.pts)
       return
     end
-    local k = known[f.kind] or { speed = {}, lift = {}, walk = {}, drag = {} }
-    k.walk, k.drag = k.walk or {}, k.drag or {}
+    local k = known[f.kind] or {}
+    for _, field in ipairs(FIELDS) do k[field] = k[field] or {} end
     known[f.kind] = k
     local walking = math.abs(f.along) >= WALK
     remember(k.speed, s)
     remember(walking and k.walk or k.lift, lift)
-    if drag then remember(k.drag, drag) end
-    log('grenade %s thrown%s: %.1f m/s %+.1f deg, drag %s; now %.1f m/s, %+.1f standing, %s walking, drag %s', f.kind,
-        walking and ' walking' or '', s, lift, drag and string.format('%.4f', drag) or '-', median(k.speed),
-        median(k.lift) or GRENADE_LIFT, median(k.walk) and string.format('%+.1f', median(k.walk)) or '-',
-        median(k.drag) and string.format('%.4f', median(k.drag)) or '-')
+    remember(k.yaw, yaw)
+    remember(k.ahead, ahead)
+    remember(k.right, right)
+    remember(k.up, up)
+    log('grenade %s thrown%s: %.1f m/s %+.1f deg up %+.1f right, from %.2f ahead %.2f right %.2f up; now %.1f m/s, '
+        .. '%+.1f standing, %s walking, %+.1f right, from %.2f %.2f %.2f', f.kind, walking and ' walking' or '', s, lift,
+        yaw, ahead, right, up, median(k.speed), median(k.lift) or GRENADE_LIFT,
+        median(k.walk) and string.format('%+.1f', median(k.walk)) or '-', median(k.yaw), median(k.ahead),
+        median(k.right), median(k.up))
     if chef.save_table then chef.save_table(SAVE, { known = known }) end
   end
 
-  local held, held_kind = nil, nil   -- last frame's grenade in hand
-  local flights = {}                 -- grenades thrown: { u, kind, pts, pitch, mx, my, along, up, at }
+  -- last frame's grenade in hand: its unit, kind, when and where. Thrown: it moves GRENADE_THROWN m/s or more (a cooking
+  -- hand swings it 6 at most: test.15-17), or it's gone from the hand and still there; left the hand: the frame before
+  local held, held_kind, held_t, held_p = nil, nil, 0, nil
+  local flights, flying = {}, {}     -- grenades thrown: { u, kind, pts, pitch, mx, my, along, up, at, feet, hx, hy,
+                                     -- left }; unit -> true while followed
+  local GRENADE_THROWN = 10
   local M2 = { on = true }
   -- called every frame; free: nothing else is drawn. Returns the arc's points, or nil
   function M2.update(c, free)
     local t = now()
-    local u, kind = in_hand()
-    -- the one in hand last frame, gone from the hand and still there: thrown (one back in the hand wasn't)
-    local followed = false
-    for i = #flights, 1, -1 do
-      if flights[i].u == held then followed = true end
-      if u and flights[i].u == u then table.remove(flights, i) end
+    if held and not flying[held] and chef.unit_alive(held) and me then
+      local x, y, z = chef.unit_position(held)
+      local fast = x and held_p and t > held_t
+                   and math.sqrt((x - held_p[1]) ^ 2 + (y - held_p[2]) ^ 2 + (z - held_p[3]) ^ 2) / (t - held_t)
+                       >= GRENADE_THROWN
+      local u0 = in_hand(flying)
+      if x and (fast or u0 ~= held) then
+        local mx, my = my_move()
+        local fh = math.max(1e-6, math.sqrt(c.fx * c.fx + c.fy * c.fy))
+        flights[#flights + 1] = { u = held, kind = held_kind, pts = { { held_t, held_p[1], held_p[2], held_p[3] } },
+                                  pitch = math.deg(camera_pitch(c)), mx = mx, my = my,
+                                  along = (mx * c.fx + my * c.fy) / fh, up = speed_up(false), at = t,
+                                  feet = { me[1], me[2], me[3] }, hx = c.fx / fh, hy = c.fy / fh, left = held_t }
+        flying[held] = true
+      end
     end
-    if held and held ~= u and not followed and chef.unit_alive(held) then
-      local mx, my = my_move()
-      local fh = math.max(1e-6, math.sqrt(c.fx * c.fx + c.fy * c.fy))
-      flights[#flights + 1] = { u = held, kind = held_kind, pts = {}, pitch = math.deg(camera_pitch(c)), mx = mx,
-                                my = my, along = (mx * c.fx + my * c.fy) / fh, up = speed_up(false), at = t }
+    local u, kind = in_hand(flying)
+    held, held_kind, held_t = u, kind, t
+    held_p = nil
+    if u then
+      local x, y, z = chef.unit_position(u)
+      if x then held_p = { x, y, z } end
     end
-    held, held_kind = u, kind
     local keep = {}
     for _, f in ipairs(flights) do
       local x, y, z
       if chef.unit_alive(f.u) then x, y, z = chef.unit_position(f.u) end
-      if x and t - f.at <= GRENADE_FLY + 0.5 then
+      if x and t - f.at <= GRENADE_FLY then
         f.pts[#f.pts + 1] = { t, x, y, z }
         keep[#keep + 1] = f
       else
+        flying[f.u] = nil
         learn(f)
       end
     end

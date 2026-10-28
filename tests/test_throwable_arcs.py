@@ -217,10 +217,10 @@ class ArcTest(unittest.TestCase):
         self.assertGreater(len(self.lines()), 20)
         self.fake["down"]["g"] = False
         self.throw_nade(nade, 18)
-        self.assertRegex(self.logs(), r"grenade db922a7afc42894b thrown: 1[78]\.\d m/s \+\d\.\d deg, drag 0\.0000; "
-                                      r"now 22\.2 m/s")
-        saved = self.fake.saved["grenade_throws4"]
-        self.assertAlmostEqual(saved.known["db922a7afc42894b"].speed[3], 18, delta=0.5)
+        self.assertRegex(self.logs(), r"grenade db922a7afc42894b thrown: 1[78]\.\d m/s \+\d\.\d deg up \+0\.0 right, "
+                                      r"from 0\.[2-4]\d ahead 0\.30 right 1\.[45]\d up; now 22\.2 m/s")
+        saved = self.fake.saved["grenade_throws5"]
+        self.assertAlmostEqual(saved.known["db922a7afc42894b"].speed[4], 18, delta=0.5)
 
     def test_a_grenade_drawn_with_its_key_and_aimed(self):
         self.nade_in_hand("c5c05fcb5747c799")
