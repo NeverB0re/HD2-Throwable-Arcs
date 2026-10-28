@@ -207,6 +207,20 @@ class ArcTest(unittest.TestCase):
             self.frames(1)
         self.assertRegex(self.logs(), r"grenade c5c05fcb5747c799 thrown: (19|20|21)\.\d m/s")
 
+    def test_a_seeker_grenade_gets_no_arc(self):
+        self.fake["down"]["g"] = True
+        self.frames(2)
+        self.fake["down"]["g"] = False
+        seeker = self.add_unit("2d398d1ec35e0838", 0.3, -0.3, 1.5)
+        self.lua.eval("function(f, n) f.fly = function() n.x = n.x + 15 / 60 end end")(self.fake, seeker)
+        for _ in range(30):
+            self.fake.fly()
+            self.frames(1)
+        self.assertIn("grenade 2d398d1ec35e0838 thrown: guided, no arc", self.logs())
+        self.fake["down"]["g"] = True                 # the next one: a seeker again, as far as is known
+        self.frames(3)
+        self.assertEqual(self.lines(), [])
+
     def test_no_arc_without_aiming(self):
         self.frames(200)
         self.assertEqual(self.lines(), [])

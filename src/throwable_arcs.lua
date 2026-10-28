@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.13'
+local VERSION = '1.1.0-test.14'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -1009,6 +1009,9 @@ local grenade = (function()
   local speeds = { ['c5c05fcb5747c799'] = 21.7,     -- throwables/sticky_grenade (G-123 Thermite)
                    ['46333fc9e3d4bd34'] = 16.5,     -- throwables/at_explosive_grenade (G-48 Giga)
                    ['5c14f27759dd3be0'] = 21 }      -- throwables/molotov_grenade
+  -- guided ones: no arc (they steer themselves once thrown); taken as the last thrown, but no speed learned
+  local GUIDED = { ['2d398d1ec35e0838'] = true,       -- throwables/self_destruct_drone (G-50 Seeker)
+                   ['8e325c933e55bf62'] = true }      -- throwables/at_self_destruct_drone (G-60 Anti-Tank Seeker)
   local last = nil                -- the kind thrown last
   local saved = chef.load_table and chef.load_table(SAVE)
   if type(saved) == 'table' then
@@ -1026,6 +1029,7 @@ local grenade = (function()
 
   -- the arc, as path() draws a stratagem ball's
   local function arc(c, held)
+    if GUIDED[held or last] then return nil end
     local ox, oy, oz = release_point(c, nil, false)
     local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
     local hx, hy = 0, 1
@@ -1060,7 +1064,7 @@ local grenade = (function()
           local x, y, z = chef.unit_position(u)
           if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 + (z - me[3] - 1) ^ 2 < GRENADE_NEAR * GRENADE_NEAR then
             k.near[#k.near + 1] = { u, kind, t, x, y, z }
-            if not k.up and speeds[kind] and not k.held then
+            if not k.up and (speeds[kind] or GUIDED[kind]) and not k.held then
               k.held = kind
               log('grenade in hand: %s', kind)
             end
@@ -1083,8 +1087,17 @@ local grenade = (function()
         if s > best_s then best, best_s, best_kind = n, s, n[2] end
       end
     end
+    for _, n in ipairs(k.near) do
+      if GUIDED[n[2]] then best, best_kind = n, n[2] end
+    end
     if not best then
       log('grenade: none seen flying off (%d new units near)', #k.near)
+      return
+    end
+    if GUIDED[best_kind] then
+      last = best_kind
+      log('grenade %s thrown: guided, no arc', best_kind)
+      if chef.save_table then chef.save_table(SAVE, { speeds = speeds, last = last }) end
       return
     end
     if best_s < 5 or best_s > 40 then
