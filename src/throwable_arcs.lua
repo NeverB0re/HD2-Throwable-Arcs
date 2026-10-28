@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.11'
+local VERSION = '1.1.0-test.12'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -793,6 +793,7 @@ local WEAPONS = {
   ['80932fa0ed6901d3'] = { 200, 1, 0, false, 'EAT-17 Expendable Anti-Tank' },
   ['b2b5e0d185605f9e'] = { 200, 1, 0, false, 'EAT-700 Expendable Napalm' },
   ['7617642765ac38c7'] = { 50, 1, 6.4, false, 'EAT-411 Leveller' },  -- (the wiki: a large disposable launcher)
+  ['e8d5f49ad7780e54'] = { 250, 2, 0.4, 0.6, 'PLAS-45 Epoch' },        -- (its unit: plasma_blaster, test.11)
   -- the One-Two's underbarrel launcher fires the GP-31's round; drawn only while its fire mode selects it (ub)
   ['a955c4ea6f6d4203'] = { 100, 1, 38.4, false, 'AR/GL-21 One-Two (its grenade launcher)', ub = true },
 }
@@ -985,6 +986,126 @@ local underbarrel_on = (function()
     end
     return on
   end
+end)()
+
+-- 1.1.0-test.12: grenades, while G is held (the game keeps a grenade in hand until G is let go, "cooking"): the throw's
+-- arc, drawn as a stratagem ball's (from the right of my chest, GRENADE_LIFT above the camera, the throw-range perks and
+-- my walk carried) at the speed of the grenade thrown last. Which grenade is in the hand can't be told before it flies
+-- (it isn't a unit until then, and the Helldiver's network fields come without their names), so each kind's speed is
+-- learned from its throws: the unit that flies off when G is let go, its kind and its speed over GRENADE_FIT s, less my
+-- velocity and the perk, kept across launches (chef.save_table) with the ones measured in testing to start from
+-- (test.9: thermite 21.7 m/s, test.11: Giga 16.5, the probe: incendiary 21). A kind thrown for the first time is
+-- drawn with the last one's speed (or GRENADE_SPEED). Keys rebound in the game aren't followed (the G key itself).
+local grenade = (function()
+  -- (the lift: the game's own "throw_angle_offset", 5 degrees for both throws, in the Helldiver's AvatarComponent
+  -- data as dumped in github.com/shalzuth/HelldiversData; test.9-11 measured 4.4-5.7. A grenade's speed isn't in that
+  -- data: its throwable settings give every kind the same 20 m reach)
+  local GRENADE_SPEED, GRENADE_LIFT, GRENADE_FIT, GRENADE_NEAR, GRENADE_WAIT = 21, math.rad(5), 0.2, 4, 1.5
+  local SAVE = 'grenade_speeds'
+  local speeds = { ['c5c05fcb5747c799'] = 21.7,     -- throwables/sticky_grenade (G-123 Thermite)
+                   ['46333fc9e3d4bd34'] = 16.5,     -- throwables/at_explosive_grenade (G-48 Giga)
+                   ['5c14f27759dd3be0'] = 21 }      -- throwables/molotov_grenade
+  local last = nil                -- the kind thrown last
+  local saved = chef.load_table and chef.load_table(SAVE)
+  if type(saved) == 'table' then
+    for kind, v in pairs(type(saved.speeds) == 'table' and saved.speeds or {}) do
+      if type(v) == 'number' then speeds[kind] = v end
+    end
+    if type(saved.last) == 'string' then last = saved.last end
+  end
+  local g_was, watch = false, nil
+  local function units()
+    local w = chef.world()
+    local list = w and chef.call('World.units', w)
+    return type(list) == 'table' and list or {}
+  end
+
+  -- the arc, as path() draws a stratagem ball's
+  local function arc(c)
+    local ox, oy, oz = release_point(c, nil, false)
+    local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
+    local hx, hy = 0, 1
+    if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
+    local mx, my = my_move()
+    local s = (last and speeds[last] or GRENADE_SPEED) * speed_up(false)
+              + math.max(-CARRY_MOST, math.min(CARRY_MOST, CARRY * (mx * hx + my * hy)))
+    local pitch = camera_pitch(c) + GRENADE_LIFT
+    local vx, vy, vz = hx * s * math.cos(pitch), hy * s * math.cos(pitch), s * math.sin(pitch)
+    local deepest = (feet_z or (c.z - 2)) - DEEPEST
+    local pts, t = { { ox, oy, oz } }, 0
+    while t < MOST_T do
+      t = t + (vz - GRAVITY * t < 0 and STEP * DOWN or STEP)
+      local z = oz + vz * t - 0.5 * GRAVITY * t * t
+      pts[#pts + 1] = { ox + vx * t, oy + vy * t, z }
+      if z < deepest then break end
+    end
+    return pts
+  end
+
+  -- after G is let go: the new unit near me that flies off, its speed learned
+  local function learn()
+    local k, t = watch, now()
+    if t - k.at > GRENADE_WAIT then
+      log('grenade: none seen flying off')
+      watch = nil
+      return
+    end
+    if not k.unit then
+      for _, u in ipairs(units()) do
+        if not k.before[u] then
+          k.before[u] = true
+          local kind = chef.unit_alive(u) and chef.unit_kind(u)
+          if kind and kind ~= '46cab355bd8d4d37' and me then        -- (never ask where a runtime-built unit is)
+            local x, y, z = chef.unit_position(u)
+            if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 + (z - me[3] - 1) ^ 2 < GRENADE_NEAR * GRENADE_NEAR then
+              k.near[#k.near + 1] = { u, kind, t, x, y, z }
+            end
+          end
+        end
+      end
+      for _, n in ipairs(k.near) do            -- the first to move off is the grenade
+        local x, y, z = chef.unit_position(n[1])
+        if x and (x - n[4]) ^ 2 + (y - n[5]) ^ 2 + (z - n[6]) ^ 2 > 0.25 then
+          k.unit, k.kind, k.first = n[1], n[2], { t, x, y, z }
+          break
+        end
+      end
+      return
+    end
+    if t - k.first[1] < GRENADE_FIT then return end
+    local x, y, z = chef.unit_position(k.unit)
+    watch = nil
+    if not (x and chef.unit_alive(k.unit)) then return end
+    local dt = t - k.first[1]
+    local vx, vy = (x - k.first[2]) / dt - k.mx, (y - k.first[3]) / dt - k.my
+    local vz = (z - k.first[4]) / dt + 0.5 * GRAVITY * dt
+    local s = math.sqrt(vx * vx + vy * vy + vz * vz) / k.up
+    if s < 5 or s > 40 then
+      log('grenade %s: %.1f m/s, not taken (it hit something?)', k.kind, s)
+      return
+    end
+    local was = speeds[k.kind]
+    speeds[k.kind] = was and (was + s) / 2 or s
+    last = k.kind
+    log('grenade %s thrown: %.1f m/s (now %.1f; was %s)', k.kind, s, speeds[k.kind], tostring(was))
+    if chef.save_table then chef.save_table(SAVE, { speeds = speeds, last = last }) end
+  end
+
+  local M2 = { on = true }
+  -- called every frame; free: nothing else is drawn. Returns the arc's points while G is held, or nil
+  function M2.update(c, free)
+    local g = chef.key_down('g') == true
+    if g_was and not g then
+      local mx, my = my_move()
+      watch = { at = now(), before = {}, near = {}, mx = mx, my = my, up = speed_up(false) }
+      for _, u in ipairs(units()) do watch.before[u] = true end
+    end
+    g_was = g
+    if watch then learn() end
+    if g and free and M2.on then return arc(c) end
+    return nil
+  end
+  return M2
 end)()
 
 -- the weapon to draw for this frame: its row in WEAPONS and its muzzle, or nil
@@ -1451,6 +1572,9 @@ if chef.has and chef.has('menu') then
   weapon_arcs = chef.option('weapon_arcs', { type = 'toggle', label = 'Weapon arcs (grenade launchers, rockets...)',
                                              default = true }) ~= false
   chef.on_change('weapon_arcs', function(v) weapon_arcs = v ~= false end)
+  grenade.on = chef.option('grenade_arcs', { type = 'toggle', label = 'Grenade arcs (while G is held)', default = true })
+               ~= false
+  chef.on_change('grenade_arcs', function(v) grenade.on = v ~= false end)
 end
 local icon_mode, icon_next = nil, 0
 
@@ -1583,6 +1707,7 @@ function M.update(dt)
     local turn, nod = camera_turn(c)
     aim = weapon_aim(c, weapon_kind, weapon_unit, math.sqrt(turn * turn + nod * nod) >= STILL_TURN)
   end
+  local nade = grenade.update(c, not (aiming or c4_aim or h or weapon))
   watch_shots(c, weapon, weapon_unit, aim, muzzle)
   watch_c4(c, h)
   lab_hook(c, weapon ~= nil)
@@ -1594,6 +1719,8 @@ function M.update(dt)
     draw_arc(c, h.c4, release_point(c, h.unit, h.c4, h.off))
   elseif weapon then
     draw_points(c, weapon_path(c, weapon, muzzle, aim))
+  elseif nade then
+    draw_points(c, nade)
   else
     clear_arc()
   end

@@ -193,9 +193,24 @@ class ArcTest(unittest.TestCase):
         self.frames(2)
 
     def test_no_arc_without_aiming(self):
-        self.fake["down"]["g"] = True                 # grenades aren't drawn (dropped after test.7)
         self.frames(200)
         self.assertEqual(self.lines(), [])
+
+    def test_a_grenade_arc_while_g_is_held_and_its_speed_learned(self):
+        self.fake["down"]["g"] = True                 # 1.1.0: held, the grenade is "cooked"; its arc shows
+        self.frames(3)
+        self.assertGreater(len(self.lines()), 20)
+        self.fake["down"]["g"] = False                # thrown: it flies off at 18 m/s, level, along x
+        self.frames(1)
+        nade = self.add_unit("1234567812345678", 0.3, -0.3, 1.7)
+        self.lua.eval("function(f, n) f.nade_fly = function() n.x = n.x + 18 / 60 end end")(self.fake, nade)
+        for _ in range(30):
+            self.fake.nade_fly()
+            self.frames(1)
+        self.assertRegex(self.logs(), r"grenade 1234567812345678 thrown: 1[89]\.\d m/s")
+        saved = self.fake.saved["grenade_speeds"]
+        self.assertEqual(saved.last, "1234567812345678")
+        self.assertAlmostEqual(saved.speeds["1234567812345678"], 18.5, delta=1)
 
     def test_the_arc_starts_where_the_ball_is_let_go_and_goes_on_below_my_feet(self):
         self.aim(10)
