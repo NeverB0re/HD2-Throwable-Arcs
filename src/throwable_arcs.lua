@@ -965,7 +965,8 @@ local underbarrel_on = (function()
           end
           i = i + 1
         end
-        tried[g] = (weapons[g] or i > #TYPES) and false or i
+        -- (test.8-9 wrote this as "(...) and false or i", which is always i: found again every frame)
+        if weapons[g] or i > #TYPES then tried[g] = false else tried[g] = i end
       end
     end
     local on = false
