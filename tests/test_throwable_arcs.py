@@ -237,7 +237,7 @@ class ArcTest(unittest.TestCase):
             self.fake.nade_fly()
             self.frames(1)
         self.assertRegex(self.logs(), r"grenade 1234567812345678 thrown: 1[89]\.\d m/s \+\d\.\d deg")
-        saved = self.fake.saved["grenade_throws2"]
+        saved = self.fake.saved["grenade_throws3"]
         self.assertEqual(saved.last, "1234567812345678")
         self.assertAlmostEqual(saved.throws["1234567812345678"][1], 18.2, delta=1)
 

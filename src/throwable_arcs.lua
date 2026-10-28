@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.16'
+local VERSION = '1.1.0-test.17'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -1015,13 +1015,17 @@ end)()
 -- github.com/shalzuth/HelldiversData; a grenade's speed isn't in that data)
 local grenade = (function()
   local GRENADE_SPEED, GRENADE_LIFT, GRENADE_NEAR, GRENADE_FAST, GRENADE_FIT, GRENADE_WAIT = 21, 5, 4, 10, 0.6, 1.5
-  local SAVE = 'grenade_throws2'  -- (test.12-15's files, with wrongly learned Gigas, are not read)
+  -- test.17: grenades slow in the air (test.16: thermite 22 to 18 m/s across, over 2 s; Giga 18.7 to 17, over 1.4 s):
+  -- drag a = -GRENADE_DRAG |v| v (fitted 0.004-0.0053); and they leave GRENADE_RIGHT m right of the hand (-0.2: the hand
+  -- in the cooking pose is 0.15-0.25 m right of where the flight starts)
+  local GRENADE_DRAG, GRENADE_RIGHT = 0.0047, -0.2
+  local SAVE = 'grenade_throws3'  -- (test.12-16's files are not read: wrong Gigas, then speeds without drag)
   -- kind -> { speed m/s, lift degrees standing, lift walking (or nil: as standing) }. Walking: WALK m/s or more along
   -- the aim (the game's own deadzone for a thrower's velocity, "thrower_velocity_deadzone", is 1): test.15's Gigas
   -- went 2.6-3.2 degrees over the camera standing, 6-16 walking forward. My walk along the aim is added to the speed.
   local WALK = 1
-  local throws = { ['c5c05fcb5747c799'] = { 21.7, 5.7 },      -- throwables/sticky_grenade (G-123 Thermite), test.9
-                   ['46333fc9e3d4bd34'] = { 16.5, 3, 11 },    -- throwables/at_explosive_grenade (G-48 Giga), test.15
+  local throws = { ['c5c05fcb5747c799'] = { 22.5, 7.5, 5.9 }, -- throwables/sticky_grenade (G-123 Thermite), test.16
+                   ['46333fc9e3d4bd34'] = { 17.3, 5.9, 5.3 }, -- throwables/at_explosive_grenade (G-48 Giga), test.16
                    ['7686544f539bb9b7'] = { 22.4, 4.2 },      -- throwables/impact_grenade (G-16 Impact), test.15
                    ['5c14f27759dd3be0'] = { 21, 5 } }         -- throwables/molotov_grenade, the probe
   -- guided ones: no arc (they steer themselves once thrown); taken as the last thrown, but nothing learned
@@ -1057,6 +1061,7 @@ local grenade = (function()
     local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
     local hx, hy = 0, 1
     if fh > 1e-6 then hx, hy = c.fx / fh, c.fy / fh end
+    ox, oy = ox + hy * GRENADE_RIGHT, oy - hx * GRENADE_RIGHT
     local mx, my = my_move()
     local th = kind and throws[kind] or { GRENADE_SPEED, GRENADE_LIFT }
     local along = mx * hx + my * hy
@@ -1064,11 +1069,17 @@ local grenade = (function()
     local pitch = camera_pitch(c) + math.rad(math.abs(along) >= WALK and th[3] or th[2])
     local vx, vy, vz = hx * s * math.cos(pitch), hy * s * math.cos(pitch), s * math.sin(pitch)
     local deepest = (feet_z or (c.z - 2)) - DEEPEST
-    local pts, t = { { ox, oy, oz } }, 0
+    local pts, t, x, y, z = { { ox, oy, oz } }, 0, ox, oy, oz
     while t < MOST_T do
-      t = t + ((vz - GRAVITY * t < 0 and finer(pts[1], pts[#pts])) and STEP * DOWN or STEP)
-      local z = oz + vz * t - 0.5 * GRAVITY * t * t
-      pts[#pts + 1] = { ox + vx * t, oy + vy * t, z }
+      local dt = (vz < 0 and finer(pts[1], pts[#pts])) and STEP * DOWN or STEP
+      for _ = 1, 3 do                             -- (three steps a segment: drag)
+        local h = dt / 3
+        local d = GRENADE_DRAG * math.sqrt(vx * vx + vy * vy + vz * vz) * h
+        vx, vy, vz = vx - d * vx, vy - d * vy, vz - GRAVITY * h - d * vz
+        x, y, z = x + vx * h, y + vy * h, z + vz * h
+      end
+      t = t + dt
+      pts[#pts + 1] = { x, y, z }
       if z < deepest then break end
     end
     return pts
@@ -1141,7 +1152,9 @@ local grenade = (function()
     -- my walk along the throw taken off (the arc adds it back), not across
     local along = (k.mx * vx + k.my * vy) / h
     h = h - along
-    return math.sqrt(h * h + vz * vz) / k.up, math.deg(math.atan2(vz, h)) - k.pitch
+    local s = math.sqrt(h * h + vz * vz)
+    s = s / math.max(0.5, 1 - GRENADE_DRAG * s * GRENADE_FIT / 2)    -- (the fit's speed is mid-way's: back to the start)
+    return s / k.up, math.deg(math.atan2(vz, h)) - k.pitch
   end
 
   local function learn(k)
