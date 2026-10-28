@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.9'
+local VERSION = '1.1.0-test.10'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -942,7 +942,9 @@ local underbarrel_on = (function()
   return function()
     local gs = call('Network.game_session', 'session')
     if not gs then return false end
-    if gs ~= session then session, tried, weapons, said = gs, {}, {}, {} end
+    -- (by the world: the session comes back as a new value each call, and test.9 started over every frame, 19,000
+    -- "my object is weapon type" lines in a mission)
+    if chef.world_id() ~= session then session, tried, weapons, said = chef.world_id(), {}, {}, {} end
     if now() >= next_look then
       next_look = now() + UB_LOOK
       local peer = call('Network.peer_id', 'peer')
@@ -1040,9 +1042,19 @@ local function record(u, what, c)
   flight_n = flight_n + 1
   local mx, my, mz = my_move()
   flights[#flights + 1] = { u = u, id = flight_n, t0 = now(), next = 0 }
-  log('flight %d: %s, kind %s; camera %.2f %.2f %.2f fwd %.4f %.4f %.4f; feet %s; moving %.2f %.2f %.2f; pose %s',
+  -- (test.10: and which way my body faces, against the camera: test.9's C4 thrown walking sideways flew 25.4 or
+  -- 20.8 m/s, not 22.4, maybe by the body's turn)
+  local body = 'nil'
+  if mine and chef.unit_alive(mine) then
+    local bx, by = chef.unit_rotation(mine)
+    if type(bx) == 'number' then
+      body = string.format('%.4f %.4f (%+.1f deg right of the camera)', bx, by,
+                           -(((math.deg(math.atan2(by, bx) - math.atan2(c.fy, c.fx)) + 180) % 360) - 180))
+    end
+  end
+  log('flight %d: %s, kind %s; camera %.2f %.2f %.2f fwd %.4f %.4f %.4f; feet %s; moving %.2f %.2f %.2f; pose %s; body %s',
       flight_n, what, tostring(chef.unit_kind(u)), c.x, c.y, c.z, c.fx, c.fy, c.fz,
-      me and string.format('%.2f %.2f %.2f', me[1], me[2], me[3]) or 'nil', mx, my, mz, tostring(hand_pose()))
+      me and string.format('%.2f %.2f %.2f', me[1], me[2], me[3]) or 'nil', mx, my, mz, tostring(hand_pose()), body)
 end
 
 local function follow_flights()
@@ -1226,6 +1238,8 @@ local function lab(c, weapon_drawn)
   end
   local pose = hand_pose()
   if pose ~= lab_pose then
+    -- (test.10: every change: test.9's key 4 showed no grenade pose)
+    log('hand pose %s -> %s (a stratagem ball held: %s)', tostring(lab_pose), tostring(pose), tostring(ball ~= nil))
     if pose == 40 or pose == 41 or lab_pose == 40 or lab_pose == 41 then units_on_me('pose ' .. tostring(pose)) end
     if pose == 40 or pose == 41 then grenade_event('pose ' .. pose) end
     lab_pose = pose

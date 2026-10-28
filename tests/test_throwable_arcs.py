@@ -407,7 +407,7 @@ class ArcTest(unittest.TestCase):
         with open(os.path.join(HERE, "..", "src", "weapon_types.lua"), encoding="utf-8") as f:
             third = re.search(r"\[\[\s*(\S+)\s+(\S+)\s+(\S+)", f.read()).group(3)
         self.lua.eval("""function(f, name)
-          f.E['Network.game_session'] = function() return 'gs' end
+          f.E['Network.game_session'] = function() return {} end   -- (a new value each call, as in the game)
           f.E['Network.peer_id'] = function() return 'me' end
           f.E['GameSession.objects_owned_by'] = function() return { 5, 6 } end
           f.E['GameSession.game_object_exists'] = function() return true end
@@ -430,6 +430,7 @@ class ArcTest(unittest.TestCase):
         self.assertIn("one-two: object 6 (type %s) fire mode 9" % third, logs)
         self.assertIn("weapon aimed: AR/GL-21 One-Two (its grenade launcher)", logs)
         self.assertNotIn("NATIVE CRASH", logs)
+        self.assertEqual(logs.count("one-two: my object 6 is weapon type"), 1, "found once, not every frame")
 
     def test_an_unknown_weapon_aimed_is_named(self):
         self.weapon_in_hand("abcdefabcdefabcd")
