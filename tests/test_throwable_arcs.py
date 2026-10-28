@@ -192,54 +192,57 @@ class ArcTest(unittest.TestCase):
         self.fake["mouse"]["left"] = True
         self.frames(2)
 
-    def test_a_long_cooked_grenade_and_its_spoon(self):
-        self.fake["down"]["g"] = True
-        self.frames(2)
-        nade = self.add_unit("c5c05fcb5747c799", 0.3, -0.3, 1.5)    # a thermite in hand while it cooks
-        self.frames(180)                                            # 3 s
-        self.assertIn("grenade in hand: c5c05fcb5747c799", self.logs())
-        self.fake["down"]["g"] = False
-        spoon = self.add_unit("3e433ad461c14d69", 0.3, -0.3, 1.5)
-        self.lua.eval("""function(f, n, s) f.fly = function()
-          n.x = n.x + 20 / 60; s.x = s.x + 3 / 60 end end""")(self.fake, nade, spoon)
-        for _ in range(100):
+    # ------------------------------------------------------------------ grenades (1.1.0)
+    def nade_in_hand(self, kind):
+        """a grenade of KIND in my right hand (a unit, as the game makes one from G down)"""
+        return self.add_unit(kind, 0.3, -0.3, 1.5)
+
+    def throw_nade(self, nade, speed, frames=200, extra=None):
+        """let go: it flies off along x at SPEED, level (the fake has no gravity), for FRAMES frames"""
+        self.lua.eval("""function(f, n, v, s) f.fly = function()
+          n.x = n.x + v / 60; if s then s.x = s.x + 3 / 60 end end end""")(self.fake, nade, speed, extra)
+        for _ in range(frames):
             self.fake.fly()
             self.frames(1)
-        self.assertRegex(self.logs(), r"grenade c5c05fcb5747c799 thrown: (19|20|21)\.\d m/s")
 
-    def test_a_seeker_grenade_gets_no_arc(self):
-        self.fake["down"]["g"] = True
-        self.frames(2)
-        self.fake["down"]["g"] = False
-        seeker = self.add_unit("2d398d1ec35e0838", 0.3, -0.3, 1.5)
-        self.lua.eval("function(f, n) f.fly = function() n.x = n.x + 15 / 60 end end")(self.fake, seeker)
-        for _ in range(100):
-            self.fake.fly()
-            self.frames(1)
-        self.assertIn("grenade 2d398d1ec35e0838 thrown: guided, no arc", self.logs())
-        self.fake["down"]["g"] = True                 # the next one: a seeker again, as far as is known
-        self.frames(3)
+    def test_no_grenade_no_arc(self):
+        self.fake["down"]["g"] = True                 # test.17 drew an arc from the air with no grenade to throw
+        self.frames(20)
         self.assertEqual(self.lines(), [])
 
-    def test_no_arc_without_aiming(self):
-        self.frames(200)
-        self.assertEqual(self.lines(), [])
-
-    def test_a_grenade_arc_while_g_is_held_and_its_speed_learned(self):
+    def test_a_grenade_arc_while_g_is_held_and_its_throw_learned(self):
+        nade = self.nade_in_hand("db922a7afc42894b")  # an Arc grenade
         self.fake["down"]["g"] = True                 # 1.1.0: held, the grenade is "cooked"; its arc shows
         self.frames(3)
         self.assertGreater(len(self.lines()), 20)
-        self.fake["down"]["g"] = False                # thrown: it flies off at 18 m/s, level, along x
-        self.frames(1)
-        nade = self.add_unit("1234567812345678", 0.3, -0.3, 1.7)
-        self.lua.eval("function(f, n) f.nade_fly = function() n.x = n.x + 18 / 60 end end")(self.fake, nade)
-        for _ in range(100):
-            self.fake.nade_fly()
-            self.frames(1)
-        self.assertRegex(self.logs(), r"grenade 1234567812345678 thrown: 1[89]\.\d m/s \+\d\.\d deg")
-        saved = self.fake.saved["grenade_throws3"]
-        self.assertEqual(saved.last, "1234567812345678")
-        self.assertAlmostEqual(saved.throws["1234567812345678"][1], 18.2, delta=1)
+        self.fake["down"]["g"] = False
+        self.throw_nade(nade, 18)
+        self.assertRegex(self.logs(), r"grenade db922a7afc42894b thrown: 1[78]\.\d m/s \+\d\.\d deg, drag 0\.0000; "
+                                      r"now 22\.2 m/s")
+        saved = self.fake.saved["grenade_throws4"]
+        self.assertAlmostEqual(saved.known["db922a7afc42894b"].speed[3], 18, delta=0.5)
+
+    def test_a_grenade_drawn_with_its_key_and_aimed(self):
+        self.nade_in_hand("c5c05fcb5747c799")
+        self.fake["mouse"]["right"] = True            # aimed (or cooked with left)
+        self.frames(3)
+        self.assertGreater(len(self.lines()), 20)
+
+    def test_a_long_cooked_grenade_and_its_spoon(self):
+        nade = self.nade_in_hand("c5c05fcb5747c799")
+        self.fake["down"]["g"] = True
+        self.frames(180)                              # 3 s
+        self.fake["down"]["g"] = False
+        spoon = self.add_unit("3e433ad461c14d69", 0.3, -0.3, 1.5)   # (not a throwable: never taken for one)
+        self.throw_nade(nade, 20, extra=spoon)
+        self.assertRegex(self.logs(), r"grenade c5c05fcb5747c799 thrown: (19|20|21)\.\d m/s")
+        self.assertNotIn("3e433ad461c14d69", self.logs().split("catch:")[0])
+
+    def test_a_seeker_grenade_gets_no_arc(self):
+        self.nade_in_hand("2d398d1ec35e0838")
+        self.fake["down"]["g"] = True
+        self.frames(3)
+        self.assertEqual(self.lines(), [])
 
     def test_the_arc_starts_where_the_ball_is_let_go_and_goes_on_below_my_feet(self):
         self.aim(10)
