@@ -219,7 +219,7 @@ class ArcTest(unittest.TestCase):
         self.throw_nade(nade, 18)
         self.assertRegex(self.logs(), r"grenade db922a7afc42894b thrown: 1[78]\.\d m/s \+\d\.\d deg up \+0\.0 right, "
                                       r"from 0\.[2-4]\d ahead 0\.30 right 1\.[45]\d up; now 22\.2 m/s")
-        saved = self.fake.saved["grenade_throws5"]
+        saved = self.fake.saved["grenade_throws6"]
         self.assertAlmostEqual(saved.known["db922a7afc42894b"].speed[4], 18, delta=0.5)
 
     def test_a_grenade_drawn_with_its_key_and_aimed(self):
@@ -237,6 +237,23 @@ class ArcTest(unittest.TestCase):
         self.throw_nade(nade, 20, extra=spoon)
         self.assertRegex(self.logs(), r"grenade c5c05fcb5747c799 thrown: (19|20|21)\.\d m/s")
         self.assertNotIn("3e433ad461c14d69", self.logs().split("catch:")[0])
+
+    def test_a_grenade_steady_only_on_the_ground_isnt_learned(self):
+        nade = self.nade_in_hand("ee4c107b941ab7f4")  # a Melta mine
+        self.fake["down"]["g"] = True
+        self.frames(3)
+        self.fake["down"]["g"] = False
+        # off the hand at 12 m/s, then it bounces about for half a second and slides steadily (test.19)
+        self.lua.eval("""function(f, n) local k = 0; f.fly = function()
+          k = k + 1
+          if k <= 1 then n.x = n.x + 12 / 60
+          elseif k <= 30 then n.z = 1.5 + 0.3 * (k % 2); n.x = n.x + (k % 3) * 0.05
+          else n.x = n.x + 8 / 60 end
+        end end""")(self.fake, nade)
+        for _ in range(200):
+            self.fake.fly()
+            self.frames(1)
+        self.assertRegex(self.logs(), r"grenade ee4c107b941ab7f4 thrown: not measured \((steady only|no steady|not a throw)")
 
     def test_a_seeker_grenade_gets_no_arc(self):
         self.nade_in_hand("2d398d1ec35e0838")
@@ -1178,7 +1195,8 @@ class ArcTest(unittest.TestCase):
         self.assertLess(abs(lagged[4] - still[4]), 1.0)
 
     def test_no_weapon_arc_in_first_person(self):
-        self.weapon_in_hand(self.GL, back=0.1)
+        gl = self.weapon_in_hand(self.GL, back=0.1)
+        self.lua.eval("function(u) u.z = 1.8 end")(gl)     # in first person, 0.5 m from the camera
         self.fake["mouse"]["right"] = True
         self.frames(3)
         self.assertEqual(self.lines(), [])

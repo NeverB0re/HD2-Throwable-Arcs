@@ -9,7 +9,7 @@
 -- Transmog's catalog (Nexus 16633).
 local chef = ...
 local M = {}
-local VERSION = '1.1.0-test.19'
+local VERSION = '1.1.0-test.20'
 
 if chef.has and chef.has('own_log') then chef.own_log('throwable_arcs') end
 local function log(fmt, ...) chef.log(fmt, ...) end
@@ -781,8 +781,12 @@ local AIMING = { STILL_TURN = 8, STILL_FOR = 0.5, AIM_LEARN = 0.05, AIM_ODD = 1.
 local AIM_OFF, SIDE_CARRY = { 0, 1.5 }, 0.5
 local aim_off = {}               -- weapon kind -> { yaw, pitch } (degrees) the weapon points off the round's way
 local aim_still = { since = nil, yaw = nil, pitch = nil, t = 0 }   -- since when the camera and the weapon are still
-local FIRST_PERSON = 0.6
-local HELD_ALONG, HELD_NEAR = 0.99, 2.5
+-- (test.20: first person is told by the camera's distance to the weapon in hand, FIRST_PERSON m or less: ~0.3 in first
+-- person, 1.5 or more in third; the camera's distance behind my feet, as until test.19, can be small lying prone. And a
+-- weapon is taken as in hand from HELD_ALONG 0.95, 18 degrees off the camera, not 0.99: worn ones are 0.8 and less)
+local FIRST_PERSON = 0.9
+local HELD_ALONG, HELD_NEAR = 0.95, 2.5
+local held_miss = nil            -- why no weapon was found in hand, for the log
 -- weapon unit kind -> { speed m/s, gravity factor, drag * caliber^2 / mass, lifetime s or false, name }. From the
 -- Helldivers wiki's data (game 1.007.201); measured ones say so. Kinds named from filediver's hash list.
 local WEAPONS = {
@@ -823,19 +827,23 @@ local function held_weapon(c)
     local fx, fy, fz = chef.unit_rotation(held.unit)
     if type(fx) == 'number' and fx * c.fx + fy * c.fy + fz * c.fz >= AIMING.HELD_KEEP then return held.kind, held.unit end
   end
-  held = nil
+  held, held_miss = nil, nil
+  local best, best_a
   for _, it in ipairs(weapon_watch.items) do
     if chef.unit_alive(it.unit) then
       local x, y = chef.unit_position(it.unit)
       if x and (x - me[1]) ^ 2 + (y - me[2]) ^ 2 < HELD_NEAR * HELD_NEAR then
         local fx, fy, fz = chef.unit_rotation(it.unit)
-        if type(fx) == 'number' and fx * c.fx + fy * c.fy + fz * c.fz >= HELD_ALONG then
-          held = { kind = it.kind, unit = it.unit }
-          return it.kind, it.unit
-        end
+        local a = type(fx) == 'number' and fx * c.fx + fy * c.fy + fz * c.fz
+        if a and (not best_a or a > best_a) then best, best_a = it, a end
       end
     end
   end
+  if best and best_a >= HELD_ALONG then
+    held = { kind = best.kind, unit = best.unit }
+    return best.kind, best.unit
+  end
+  if best then held_miss = string.format('%s points %.3f along the camera', WEAPONS[best.kind][5], best_a) end
   return nil
 end
 
@@ -849,11 +857,10 @@ local function muzzle_of(u, w)
   return { x + fx * ahead, y + fy * ahead, z + fz * ahead + up }
 end
 
-local function first_person(c)
-  if not me then return false end
-  local fh = math.sqrt(c.fx * c.fx + c.fy * c.fy)
-  if fh < 1e-6 then return false end
-  return -((c.x - me[1]) * c.fx + (c.y - me[2]) * c.fy) / fh < FIRST_PERSON
+local function first_person(c, u)
+  local x, y, z = chef.unit_position(u)
+  if not x then return false end
+  return (x - c.x) ^ 2 + (y - c.y) ^ 2 + (z - c.z) ^ 2 < FIRST_PERSON * FIRST_PERSON
 end
 
 -- the round as it is fired: where it starts and its velocity (mx, my: my velocity on the ground; aim: { yaw, pitch }
@@ -1029,7 +1036,8 @@ local grenade = (function()
   local GRENADE_SPEED, GRENADE_LIFT, WALK = 21, 5, 1
   local GRENADE_HAND, GRENADE_LOW, GRENADE_HIGH, GRENADE_RIGHT = 1.0, 0.6, 2.4, -0.2
   local GRENADE_FAST, GRENADE_STEADY, GRENADE_FIT, GRENADE_FLY, GRENADE_KEEP = 5, 0.15, 0.3, 2.5, 9
-  local SAVE = 'grenade_throws5'  -- (test.12-18's files are not read: learned the wrong things)
+  local GRENADE_SOON, GRENADE_REACH, GRENADE_OFF = 0.2, 3, 0.15
+  local SAVE = 'grenade_throws6'  -- (test.12-19's files are not read: learned the wrong things)
   -- drag by kind, from whole flights (test.16: thermite 22 to 18 m/s across over 2 s, Giga 18.7 to 17 over 1.4 s;
   -- test.17: Arc, Melta and Impact kept their speed)
   local DRAG = { ['c5c05fcb5747c799'] = 0.0053, ['46333fc9e3d4bd34'] = 0.004 }
@@ -1053,9 +1061,12 @@ local grenade = (function()
     ['46333fc9e3d4bd34'] = { speed = { 17.0, 17.7, 17.6 }, lift = { 4.3, 6.4, 6.9 }, walk = { 4.1, 4.8 } },  -- G-48 Giga
     ['db922a7afc42894b'] = { speed = { 22.3, 22.5, 22.2 }, lift = { 3.2, 3.2, 3.4 }, walk = { 4.5, 4.6 },  -- G-31 Arc
                              yaw = { 0 }, ahead = { 0.1 }, right = { 0.3 }, up = { 1.5 } },
-    ['ee4c107b941ab7f4'] = { speed = { 10.5, 10.5 }, lift = { 1.2, 4.5 }, walk = { 3.3, 4.3 },      -- G/40-K Melta mine
-                             yaw = { 0 }, ahead = { 1.3 }, right = { 0.74 }, up = { 0.8 } },
+    ['ee4c107b941ab7f4'] = { speed = { 10.5, 10.6, 10.9 }, lift = { 4.5, 4.6 }, walk = { 3.8, 4.3 },  -- G/40-K Melta mine
+                             yaw = { 0 } },
     ['7686544f539bb9b7'] = { speed = { 22.4 }, lift = { 4.2 } },                                     -- G-16 Impact
+    ['5c14f27759dd3be0'] = { speed = { 22.2, 22.2, 22.3 }, lift = { 4.0, 3.9, 3.5 }, walk = { 4.2, 5.0 },  -- molotov
+                             yaw = { 0 }, ahead = { 0.03, 0.09, 0.3 }, right = { 0.29, 0.31, 0.38 },
+                             up = { 2.2, 2.24, 2.07 } },
   }
   local saved = chef.load_table and chef.load_table(SAVE)
   if type(saved) == 'table' and type(saved.known) == 'table' then
@@ -1162,7 +1173,12 @@ local grenade = (function()
         break
       end
     end
-    if not first then return nil end
+    if not first then return nil, 'no steady flight' end
+    -- (test.20: only a flight steady soon after the hand, GRENADE_SOON s: test.19's Melta mines were steady only once
+    -- they slid or rolled on the ground, and their starts, run back from there, came out 5 m behind and 30 m under me)
+    if p[first][1] - f.left > GRENADE_SOON then
+      return nil, string.format('steady only %.2f s after the hand', p[first][1] - f.left)
+    end
     -- least squares over the first GRENADE_FIT s: straight across, falling at GRAVITY
     local t0 = p[first][1]
     local n, st, stt, sx, sy, sz, stx, sty, stz = 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -1177,6 +1193,15 @@ local grenade = (function()
     if n < 4 or den <= 0 then return nil end
     local vx, vy, vz = (n * stx - st * sx) / den, (n * sty - st * sy) / den, (n * stz - st * sz) / den
     local x0, y0, z0 = (sx - vx * st) / n, (sy - vy * st) / n, (sz - vz * st) / n
+    -- (and only a flight that is a throw: off the fitted path by GRENADE_OFF m at most, RMS; bounces aren't)
+    local off = 0
+    for i = first, first + n - 1 do
+      local t = p[i][1] - t0
+      off = off + (p[i][2] - x0 - vx * t) ^ 2 + (p[i][3] - y0 - vy * t) ^ 2
+            + (p[i][4] - z0 - vz * t + 0.5 * GRAVITY * t * t) ^ 2
+    end
+    off = math.sqrt(off / n)
+    if off > GRENADE_OFF then return nil, string.format('not a throw: %.2f m off the path of one', off) end
     local h = math.sqrt(vx * vx + vy * vy)
     if h < 1e-6 then return nil end
     -- the start: that path back at the last frame it was in my hand, from my feet then
@@ -1191,9 +1216,12 @@ local grenade = (function()
     local r = 1 + (DRAG[f.kind] or 0) * math.sqrt(h * h + vz * vz) * GRENADE_FIT / 2
     local ha = h * r - along
     vz = vz * r
-    if ha <= 0 then return nil end
-    return math.sqrt(ha * ha + vz * vz) / f.up, math.deg(math.atan2(vz, ha)) - f.pitch, yaw,
-           dx * hx + dy * hy, dx * hy - dy * hx, bz - f.feet[3]
+    if ha <= 0 then return nil, 'thrown backwards' end
+    local sa, sr, su = dx * hx + dy * hy, dx * hy - dy * hx, bz - f.feet[3]
+    if sa * sa + sr * sr > GRENADE_REACH * GRENADE_REACH or su < 0 or su > GRENADE_REACH then
+      return nil, string.format('a start no hand reaches (%.1f ahead %.1f right %.1f up)', sa, sr, su)
+    end
+    return math.sqrt(ha * ha + vz * vz) / f.up, math.deg(math.atan2(vz, ha)) - f.pitch, yaw, sa, sr, su
   end
 
   local function remember(list, x)
@@ -1205,7 +1233,7 @@ local grenade = (function()
     if GUIDED[f.kind] then return end
     local s, lift, yaw, ahead, right, up = measure(f)
     if not s then
-      log('grenade %s thrown: no steady flight to measure (%d positions)', f.kind, #f.pts)
+      log('grenade %s thrown: not measured (%s; %d positions)', f.kind, lift or '?', #f.pts)
       return
     end
     local k = known[f.kind] or {}
@@ -1287,8 +1315,9 @@ local function weapon_aimed(c)
   end
   local kind, u = held_weapon(c)
   if kind and WEAPONS[kind].ub and not underbarrel_on() then kind = nil end     -- (its rifle: no arc)
-  local fp = kind and first_person(c)
-  local said = kind and (WEAPONS[kind][5] .. (fp and ' (first person: not drawn)' or '')) or 'none'
+  local fp = kind and first_person(c, u)
+  local said = kind and (WEAPONS[kind][5] .. (fp and ' (first person: not drawn)' or ''))
+               or ('none' .. (held_miss and ' (' .. held_miss .. ')' or ''))
   if said ~= said_weapon then
     said_weapon = said
     log('weapon aimed: %s', said)
